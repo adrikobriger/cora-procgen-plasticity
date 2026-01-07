@@ -116,6 +116,11 @@ class PPOPolicy(PolicyBase):
         with torch.no_grad():
             value, action, action_log_prob, recurrent_hidden_states = \
                 self._actor_critic.act(observation, recurrent_hidden_state, masks, action_space=action_space)
+        
+        # --- BEGIN FIX: procgen/gym3 expects actions shape (N,), but PPO outputs (N,1) ---
+        if isinstance(action, torch.Tensor) and action.dim() == 2 and action.size(1) == 1:
+            action = action.squeeze(1)   # (N,1) -> (N,)
+        # --- END FIX ---
 
         timestep_data = PPOTimestepData(observation=observation, recurrent_hidden_states=recurrent_hidden_states,
                                         actions=action, action_log_probs=action_log_prob, values=value,

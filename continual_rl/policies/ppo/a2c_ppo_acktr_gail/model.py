@@ -198,8 +198,20 @@ class CNNBase(NNBase):
         self.main = nn.Sequential(
             init_(nn.Conv2d(num_inputs, 32, 8, stride=4)), nn.ReLU(),
             init_(nn.Conv2d(32, 64, 4, stride=2)), nn.ReLU(),
-            init_(nn.Conv2d(64, 32, 3, stride=1)), nn.ReLU(), Flatten(),
-            init_(nn.Linear(32 * 7 * 7, hidden_size)), nn.ReLU())
+            init_(nn.Conv2d(64, 32, 3, stride=1)), nn.ReLU(),
+
+            # CHANGE
+            # procgen obs are 64x64 -> conv stack gives 4x4, atari gives 7x7.
+            # force a fixed spatial size so the Linear always matches.
+            nn.AdaptiveAvgPool2d((4, 4)),
+            # DONE
+
+            Flatten(),
+
+            # CHANGE
+            init_(nn.Linear(32 * 4 * 4, hidden_size)), nn.ReLU() 
+            # DONE
+        )
 
         init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
                                constant_(x, 0))

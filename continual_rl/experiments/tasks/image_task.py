@@ -26,7 +26,31 @@ class ImagePreprocessor(PreprocessorBase):
         The preprocessed image will have values in range [0, 255] and shape [batch, time, channels, width, height].
         Handled as a batch for speed.
         """
-        processed_image = torch.stack([image.to_tensor() for image in batched_env_image])
+        # OLD (breaks because `image` is already a torch.Tensor)
+        # processed_image = torch.stack([image.to_tensor() for image in batched_env_image])
+
+        # NEW (works for both old "image objects" + new torch/np arrays)
+        tensors = []
+        for image in batched_env_image:
+            if hasattr(image, "to_tensor"):
+                # --- FIX: keep backward compatibility (old image wrapper types) ---
+                t = image.to_tensor()
+            else:
+                # --- FIX: handle torch.Tensor / numpy.ndarray directly ---
+                import numpy as np
+
+                if isinstance(image, torch.Tensor):
+                    t = image
+                else:
+                    t = torch.as_tensor(image)
+
+                # if it's HWC (common for procgen), convert to CHW (what the CNN expects)
+                if t.ndim == 3 and t.shape[-1] in (1, 3, 4) and t.shape[0] not in (1, 3, 4):
+                    t = t.permute(2, 0, 1)
+
+            tensors.append(t)
+
+        processed_image = torch.stack(tensors)
         return processed_image
 
     def render_episode(self, episode_observations):

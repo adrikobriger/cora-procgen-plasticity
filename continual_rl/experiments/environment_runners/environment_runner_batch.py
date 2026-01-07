@@ -25,7 +25,7 @@ class EnvironmentRunnerBatch(EnvironmentRunnerBase):
         self._parallel_env = None
         self._last_observations = None  # To allow returning mid-episode
         self._last_timestep_data = None  # Always stores the last thing seen, even across "dones"
-        self._cumulative_rewards = np.array([0 for _ in range(num_parallel_envs)], dtype=np.float)
+        self._cumulative_rewards = np.array([0 for _ in range(num_parallel_envs)], dtype=np.float64)
 
         # Used to determine what to save off to logs and when
         self._observations_to_render = []
@@ -116,6 +116,16 @@ class EnvironmentRunnerBatch(EnvironmentRunnerBase):
                                                                  action_space_id,
                                                                  self._last_timestep_data,
                                                                  eval_mode)
+
+            # --- FIX: procgen/gym3 expects actions shape (num_envs,), not (num_envs, 1)
+            import numpy as np
+            if hasattr(actions, "detach"):  # torch tensor
+                actions = actions.detach().cpu().numpy()
+            actions = np.asarray(actions)
+
+            if actions.ndim == 2 and actions.shape[1] == 1:
+                actions = actions[:, 0]  # <-- squeeze (N,1) -> (N,)
+            # --- end fix
 
             # ParallelEnv automatically resets the env and returns the new observation when a "done" occurs
             result = self._parallel_env.step(actions)

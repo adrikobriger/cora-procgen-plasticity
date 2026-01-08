@@ -1,13 +1,13 @@
+import contextlib
+import io
 import logging
 import tempfile
 import types
-import gym
 import numpy as np
 import random
 import torch
 import os
 import tempfile
-
 
 class Utils(object):
 
@@ -18,18 +18,20 @@ class Utils(object):
         """
         logger = logging.getLogger(file_path)
 
-        # Since getLogger will always retrieve the same logger, we need to make sure we don't add many duplicate handlers
-        # Check if we've set this up before by seeing if handlers already exist
         if len(logger.handlers) == 0:
             formatter = logging.Formatter("%(asctime)s;%(levelname)s;%(message)s")
             file_handler = logging.FileHandler(file_path)
             file_handler.setFormatter(formatter)
 
             logger.addHandler(file_handler)
-            logger.addHandler(logging.StreamHandler())
+
+            # IMPORTANT: don't also print these file-loggers to terminal
+            logger.propagate = False
+
             logger.setLevel(logging.DEBUG)
 
         return logger
+
 
     @classmethod
     def make_env(cls, env_spec, create_seed=False, seed_to_set=None, max_tries=2):
@@ -53,7 +55,15 @@ class Utils(object):
                 if isinstance(env_spec, types.LambdaType):
                     env = env_spec()
                 else:
+
+                    # ADDED: Clean up gym import logging
+                    # gym prints an "unmaintained" banner on import in some versions.
+                    # importing it here lets us silence that banner cleanly.
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        import gym
+                    # END ADDED
                     env = gym.make(env_spec)
+
             except Exception as e:
                 make_env_tries += 1
                 if make_env_tries > max_tries:
@@ -87,7 +97,9 @@ class Utils(object):
             try:
                 env.seed(seed)
             except:
-                print("Environment does not support seeding")
+                # ADDED: This was spamming logs in some environments
+                pass
+                # print("Environment does not support seeding")
 
         return seed
 

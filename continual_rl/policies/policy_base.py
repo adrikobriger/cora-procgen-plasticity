@@ -25,12 +25,33 @@ class PolicyBase(ABC):
         """
         pass
 
-    def shutdown(self):
+    def shutdown(self): 
         """
         Indicates the experiment has shutdown, and the policy should cleanup any resources it has open.
         Optional.
         """
         pass
+
+    # ADDED: HOOKS FOR TASK START/END
+    def on_task_start(self, cycle_id: int, task_run_id: int):
+        """
+        Hook called by Experiment right before training/eval begins for a given task.
+        Default: no-op.
+        :param cycle_id: index of the current cycle through the task list
+        :param task_run_id: index in Experiment.tasks (includes eval tasks if present)
+        """
+        pass
+
+    # ADDED: HOOKS FOR TASK START/END
+    def on_task_end(self, cycle_id: int, task_run_id: int):
+        """
+        Hook called by Experiment right after a task finishes.
+        Default: no-op.
+        :param cycle_id: index of the current cycle through the task list
+        :param task_run_id: index in Experiment.tasks (includes eval tasks if present)
+        """
+        pass
+
 
     @abstractmethod
     def get_environment_runner(self, task_spec: TaskSpec):

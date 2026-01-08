@@ -1,4 +1,5 @@
 import argparse
+import json
 from continual_rl.utils.configuration_loader import ConfigurationLoader
 from continual_rl.available_policies import get_available_policies
 from continual_rl.experiment_specs import get_available_experiments
@@ -26,6 +27,18 @@ class ArgparseManager(object):
         command_line_parser.add_argument("--output-dir", help="The output directory where this experiment's results"
                                                               "(logs and models) will be stored.",
                                          type=str, default="tmp")
+        command_line_parser.add_argument(
+            "--intervention_type",
+            type=str,
+            default=None,
+            help="Intervention to use (dense, reset, partial_reinit, gmp, set, redo)"
+        )
+        command_line_parser.add_argument(
+            "--intervention_params",
+            type=str,
+            default=None,
+            help="JSON string for intervention parameters, e.g. '{\"pct\": 0.2}'"
+        )
 
         return command_line_parser
 
@@ -68,6 +81,7 @@ class ArgparseManager(object):
             experiment, policy = configuration_loader.load_next_experiment_from_config(args.output_dir,
                                                                                        args.config_file,
                                                                                        resume_id=args.resume_id)
+        
         else:
             # otherwise default to command-line mode and use command line parser
             args, extras = argparser.command_line_mode_parser.parse_known_args(raw_args)
@@ -75,14 +89,35 @@ class ArgparseManager(object):
             # Extras is a list in the form ["--arg1", "val1", "--arg2", "val2"]. Convert it to a dictionary
             raw_experiment = {extras[i].replace('--', ''): extras[i + 1] for i in range(0, len(extras), 2)}
 
+            # ADDED: intervention CLI
+            if getattr(args, "intervention_type", None) is not None:
+                raw_experiment["intervention_type"] = args.intervention_type
+
+            if getattr(args, "intervention_params", None) is not None:
+                try:
+                    parsed = json.loads(args.intervention_params)
+                except json.JSONDecodeError as e:
+                    raise ValueError(
+                        f"--intervention_params must be valid JSON. Got: {args.intervention_params}"
+                    ) from e
+
+                if not isinstance(parsed, dict):
+                    raise ValueError(
+                        f"--intervention_params must decode to a JSON object (dict). Got: {type(parsed)}"
+                    )
+
+                raw_experiment["intervention_params"] = parsed
+            # END ADDED
+
             if "experiment" not in raw_experiment:
                 raise ArgumentMissingException("--experiment required in command-line mode")
 
             if "policy" not in raw_experiment:
                 raise ArgumentMissingException("--policy required in command-line mode")
 
-            # load_next_experiment is expecting a list of experiment configs, so put our experiment in a list
-            experiment, policy = configuration_loader.load_next_experiment_from_dicts(args.output_dir,
-                                                                                     [raw_experiment])
+            experiment, policy = configuration_loader.load_next_experiment_from_dicts(
+                args.output_dir,
+                [raw_experiment]
+            )
 
         return experiment, policy

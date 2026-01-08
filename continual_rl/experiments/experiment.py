@@ -121,6 +121,12 @@ class Experiment(object):
             for task_run_id, task in enumerate(self.tasks[start_task_id:], start=start_task_id):
                 # Run the current task as a generator so we can intersperse testing tasks during the run
                 self._logger.info(f"Starting cycle {cycle_id} task {task_run_id}")
+                
+                # ADDED: INTEGRATION WITH POLICY HOOKS
+                # Policy hook: task is about to start (train or eval)
+                policy.on_task_start(cycle_id=cycle_id, task_run_id=task_run_id)
+                # END ADDED
+
                 task_complete = False
                 task_runner = task.run(
                     task_run_id,
@@ -175,6 +181,11 @@ class Experiment(object):
 
                 # Log out some info about the just-completed task
                 self._logger.info(f"Task {task_run_id} complete")
+
+                # ADDED: INTEGRATION WITH POLICY HOOKS
+                # Policy hook: task has finished (train or eval)
+                policy.on_task_end(cycle_id=cycle_id, task_run_id=task_run_id)
+                # END ADDED
 
                 # Only increment the global counter for training (it's supposed to represent number of frames *trained on*)
                 if not task._task_spec.eval_mode:

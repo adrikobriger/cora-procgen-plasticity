@@ -28,6 +28,10 @@ class PPOPolicyConfig(ConfigBase):
         self.comment = ""  # For experiment-writers to leave a comment for themselves, not used in PPO
         self.clip_reward = True
 
+        # ADDED: Continual RL interventions (default = no intervention)
+        self.intervention_type = "dense"
+        self.intervention_params = {}
+
     def _load_from_dict_internal(self, config_dict):
         loaded_policy_config = self._auto_load_class_parameters(config_dict)
         return loaded_policy_config

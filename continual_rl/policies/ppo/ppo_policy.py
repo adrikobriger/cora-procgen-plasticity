@@ -1,5 +1,6 @@
 import torch
 import os
+import logging
 from continual_rl.policies.policy_base import PolicyBase
 from continual_rl.policies.ppo.ppo_policy_config import PPOPolicyConfig
 from continual_rl.policies.ppo.ppo_timestep_data import PPOTimestepData
@@ -9,6 +10,7 @@ from continual_rl.policies.ppo.a2c_ppo_acktr_gail.storage import RolloutStorage
 from continual_rl.experiments.environment_runners.environment_runner_batch import EnvironmentRunnerBatch
 from continual_rl.utils.utils import Utils
 import continual_rl.policies.ppo.a2c_ppo_acktr_gail.utils as utils
+from continual_rl.interventions import make_intervention, InterventionContext
 
 
 class PPOPolicy(PolicyBase):
@@ -24,6 +26,7 @@ class PPOPolicy(PolicyBase):
     """
     def __init__(self, config: PPOPolicyConfig, observation_space, action_spaces):  # Switch to your config type
         super().__init__(config)
+        self._logger = logging.getLogger(__name__)
         max_action_space = Utils.get_max_discrete_action_space(action_spaces)
         self._action_spaces = action_spaces
 
@@ -32,6 +35,14 @@ class PPOPolicy(PolicyBase):
         observation_size = observation_space.shape
         compressed_observation_size = [observation_size[0] * observation_size[1], observation_size[2], observation_size[3]]
         self._config = config
+
+        # ADDED:
+        # Continual RL intervention settings (default: dense/no-op)
+        self._intervention_type = getattr(self._config, "intervention_type", "dense")
+        self._logger.info("ppo | intervention_type=%s", self._intervention_type)
+        self._intervention_params = getattr(self._config, "intervention_params", {})
+        # END ADDED
+
         self._device = torch.device("cuda:0" if self._config.cuda else "cpu")
 
         self._actor_critic = Policy(obs_shape=compressed_observation_size,
@@ -57,6 +68,28 @@ class PPOPolicy(PolicyBase):
             max_grad_norm=self._config.max_grad_norm)
         self._step_id = 0  # What collection step we're at, in the current num_steps size collection
         self._train_step_id = 0  # How many times we've trained
+
+        # ADDED:
+        # Build intervention handler (keeps PPOPolicy clean)
+        ctx = InterventionContext(
+            actor_critic=self._actor_critic,
+            ppo_trainer=self._ppo_trainer,
+            rollout_storage=self._rollout_storage,
+            device=self._device,
+            logger=self._logger,
+            params=self._intervention_params,
+        )
+        self._intervention = make_intervention(self._intervention_type, ctx)
+        self._logger.info("ppo | intervention_class=%s", self._intervention.__class__.__name__)
+        # END ADDED
+
+    # ADDED METHODS FOR POLICY HOOKS
+    def on_task_start(self, cycle_id: int, task_run_id: int):
+        self._intervention.on_task_start(cycle_id, task_run_id)
+    
+    # ADDED METHODS FOR POLICY HOOKS
+    def on_task_end(self, cycle_id: int, task_run_id: int):
+        self._intervention.on_task_end(cycle_id, task_run_id)
 
     def get_environment_runner(self, task_spec):
         # See note in policy_base.get_environment_runner

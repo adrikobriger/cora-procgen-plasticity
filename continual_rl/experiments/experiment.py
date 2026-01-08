@@ -38,6 +38,7 @@ class Experiment(object):
         self._output_dir = None
         self._continual_testing_freq = continual_testing_freq
         self._cycle_count = cycle_count
+        self._core_logger = None
 
     def set_output_dir(self, output_dir):
         self._output_dir = output_dir
@@ -51,6 +52,11 @@ class Experiment(object):
     @property
     def _logger(self):
         return Utils.create_logger(f"{self.output_dir}/core_process.log")
+    
+    # ADDED: Trying to clean up loggers and terminal output
+    def _console(self, msg: str) -> None:
+        # clean human-readable terminal output (no timestamps, no logger prefixes)
+        print(msg, flush=True)
 
     @classmethod
     def _get_action_spaces(self, tasks):
@@ -121,6 +127,7 @@ class Experiment(object):
             for task_run_id, task in enumerate(self.tasks[start_task_id:], start=start_task_id):
                 # Run the current task as a generator so we can intersperse testing tasks during the run
                 self._logger.info(f"Starting cycle {cycle_id} task {task_run_id}")
+                self._console(f"[TASK] start | cycle={cycle_id} task={task_run_id}")
                 
                 # ADDED: INTEGRATION WITH POLICY HOOKS
                 # Policy hook: task is about to start (train or eval)
@@ -143,10 +150,44 @@ class Experiment(object):
                 # The last step at which continual testing was done. Initializing to be more negative
                 # than the frequency we collect at, to ensure we do a collection right away
                 last_continual_testing_step = -10 * continual_freq if continual_freq is not None else None
+                last_printed_t = None  # For logging training progress
 
                 while not task_complete:
                     try:
-                        task_timesteps, _ = next(task_runner)
+                        task_timesteps, info = next(task_runner)
+                        # ADDED: For better logging of training progress
+                        if (not task._task_spec.eval_mode) and (task_timesteps % 1024 == 0):
+                            # info is usually: ([reward], list_of_metric_dicts)
+                            r = None
+                            stats = {}
+
+                            if isinstance(info, tuple) and len(info) == 2:
+                                reward_list, metric_list = info
+                                if reward_list:
+                                    r = reward_list[-1]
+
+                                if metric_list:
+                                    for m in metric_list:
+                                        if m.get("type") == "scalar":
+                                            stats[m["tag"]] = m["value"]
+
+                            r_str = f"{r:.3f}" if isinstance(r, (int, float)) else "NA"
+
+                            vloss = stats.get("value_loss")
+                            aloss = stats.get("action_loss")
+                            ent   = stats.get("dist_entropy")
+
+                            vloss_str = f"{vloss:.4f}" if isinstance(vloss, (int, float)) else "NA"
+                            aloss_str = f"{aloss:.4f}" if isinstance(aloss, (int, float)) else "NA"
+                            ent_str   = f"{ent:.3f}"   if isinstance(ent, (int, float)) else "NA"
+
+                            self._console(
+                                f"[TRAIN] cycle={cycle_id} task={task_run_id} "
+                                f"t={total_train_timesteps + task_timesteps} "
+                                f"r={r_str} vloss={vloss_str} aloss={aloss_str} ent={ent_str}"
+                            )
+                            # END ADDED
+                            
                     except StopIteration:
                         task_complete = True
 
@@ -181,6 +222,7 @@ class Experiment(object):
 
                 # Log out some info about the just-completed task
                 self._logger.info(f"Task {task_run_id} complete")
+                self._console(f"[TASK] end   | cycle={cycle_id} task={task_run_id} steps={task_timesteps}")
 
                 # ADDED: INTEGRATION WITH POLICY HOOKS
                 # Policy hook: task has finished (train or eval)

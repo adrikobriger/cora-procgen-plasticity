@@ -131,7 +131,8 @@ class Experiment(object):
                 
                 # ADDED: INTEGRATION WITH POLICY HOOKS
                 # Policy hook: task is about to start (train or eval)
-                policy.on_task_start(cycle_id=cycle_id, task_run_id=task_run_id)
+                if not task._task_spec.eval_mode:
+                    policy.on_task_start(cycle_id=cycle_id, task_run_id=task_run_id)
                 # END ADDED
 
                 task_complete = False
@@ -187,7 +188,7 @@ class Experiment(object):
                                 f"r={r_str} vloss={vloss_str} aloss={aloss_str} ent={ent_str}"
                             )
                             # END ADDED
-                            
+
                     except StopIteration:
                         task_complete = True
 
@@ -226,7 +227,8 @@ class Experiment(object):
 
                 # ADDED: INTEGRATION WITH POLICY HOOKS
                 # Policy hook: task has finished (train or eval)
-                policy.on_task_end(cycle_id=cycle_id, task_run_id=task_run_id)
+                if not task._task_spec.eval_mode:
+                    policy.on_task_end(cycle_id=cycle_id, task_run_id=task_run_id)
                 # END ADDED
 
                 # Only increment the global counter for training (it's supposed to represent number of frames *trained on*)

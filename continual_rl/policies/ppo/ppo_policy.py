@@ -10,7 +10,7 @@ from continual_rl.policies.ppo.a2c_ppo_acktr_gail.storage import RolloutStorage
 from continual_rl.experiments.environment_runners.environment_runner_batch import EnvironmentRunnerBatch
 from continual_rl.utils.utils import Utils
 import continual_rl.policies.ppo.a2c_ppo_acktr_gail.utils as utils
-from continual_rl.interventions import make_intervention, InterventionContext
+from continual_rl.policies.ppo.interventions import make_intervention, InterventionContext
 
 
 class PPOPolicy(PolicyBase):

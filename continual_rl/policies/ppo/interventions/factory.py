@@ -24,5 +24,6 @@ def make_intervention(name: str, ctx: InterventionContext) -> InterventionBase:
         return SETIntervention(ctx)
     if name in ("redo",):
         return ReDoIntervention(ctx)
+    
 
     raise ValueError(f"Unknown intervention_type: {name}")

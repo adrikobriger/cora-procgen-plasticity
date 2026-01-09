@@ -81,6 +81,9 @@ class PPOPolicy(PolicyBase):
         )
         self._intervention = make_intervention(self._intervention_type, ctx)
         self._logger.info("ppo | intervention_class=%s", self._intervention.__class__.__name__)
+
+        # Wire intervention into PPO update loop (optimizer-step hooks)
+        self._ppo_trainer.intervention = self._intervention
         # END ADDED
 
     # ADDED METHODS FOR POLICY HOOKS

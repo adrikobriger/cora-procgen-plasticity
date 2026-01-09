@@ -35,6 +35,8 @@ class PPO():
         self.use_clipped_value_loss = use_clipped_value_loss
 
         self.optimizer = optim.Adam(actor_critic.parameters(), lr=lr, eps=eps)
+        # ADDED FOR INTERVENTIONS
+        self.intervention = None
 
     def update(self, rollouts, action_space):
         advantages = rollouts.returns[:-1] - rollouts.value_preds[:-1]
@@ -81,12 +83,36 @@ class PPO():
                 else:
                     value_loss = 0.5 * (return_batch - values).pow(2).mean()
 
+                # self.optimizer.zero_grad()
+                # (value_loss * self.value_loss_coef + action_loss -
+                #  dist_entropy * self.entropy_coef).backward()
+                # nn.utils.clip_grad_norm_(self.actor_critic.parameters(),
+                #                          self.max_grad_norm)
+                # self.optimizer.step()
+
+                # ADDED FOR INTERVENTIONS:
                 self.optimizer.zero_grad()
-                (value_loss * self.value_loss_coef + action_loss -
-                 dist_entropy * self.entropy_coef).backward()
+
+                loss = (value_loss * self.value_loss_coef + action_loss -
+                        dist_entropy * self.entropy_coef)
+
+                # intervention hook: before backward/step
+                if self.intervention is not None:
+                    self.intervention.before_optimizer_step()
+
+                loss.backward()
+
                 nn.utils.clip_grad_norm_(self.actor_critic.parameters(),
                                          self.max_grad_norm)
+
                 self.optimizer.step()
+
+                # intervention hooks: after step + step counter 
+                if self.intervention is not None:
+                    self.intervention.after_optimizer_step()
+                    self.intervention.on_optimizer_step()
+                # END ADDED
+
 
                 value_loss_epoch += value_loss.item()
                 action_loss_epoch += action_loss.item()

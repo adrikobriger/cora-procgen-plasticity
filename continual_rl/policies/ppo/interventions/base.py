@@ -29,14 +29,14 @@ class InterventionBase:
         # dedicated logger namespace for interventions
         self.logger = ctx.logger.getChild("intervention")
 
-    # Task-boundary hooks (already wired via Experiment -> Policy)
+    # Task-boundary hooks (wired via Experiment -> Policy)
     def on_task_start(self, cycle_id: int, task_run_id: int) -> None:
         pass
 
     def on_task_end(self, cycle_id: int, task_run_id: int) -> None:
         pass
 
-    # Optimizer-step hooks (used later for GMP/SET/ReDo)
+    # Optimizer-step hooks (used for GMP/SET/ReDo)
     def before_optimizer_step(self) -> None:
         pass
 

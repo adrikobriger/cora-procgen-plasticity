@@ -40,6 +40,10 @@ class Experiment(object):
         self._cycle_count = cycle_count
         self._core_logger = None
 
+        # ADDED: tracking continual-eval returns for forgetting metrics
+        self._eval_last_return = {}
+        self._ref_return_end_of_task = {}
+
     def set_output_dir(self, output_dir):
         self._output_dir = output_dir
 
@@ -83,7 +87,7 @@ class Experiment(object):
 
         return common_attribute
 
-    def _run_continual_eval(self, task_run_id, policy, summary_writer, total_timesteps):
+    def _run_continual_eval(self, task_run_id, policy, summary_writer, total_timesteps, set_ref_task_run_id=None):
         # Run a small amount of eval on all non-eval, not-currently-running tasks
         for test_task_run_id, test_task in enumerate(self.tasks):
             # not checking test_task._task_spec.eval_mode anymore since some eval tasks
@@ -102,13 +106,57 @@ class Experiment(object):
                 timestep_log_offset=total_timesteps,
             )
             test_complete = False
+            last_reward = None
+
             while not test_complete:
                 try:
-                    next(test_task_runner)
+                    info = next(test_task_runner)
+
+                    # info is usually: ([reward], list_of_metric_dicts)
+                    if isinstance(info, tuple) and len(info) == 2:
+                        rewards, _ = info
+                        if rewards is None:
+                            pass
+                        elif isinstance(rewards, (list, tuple)):
+                            if len(rewards) > 0:
+                                last_reward = rewards[-1]
+                        else:
+                            # scalar case
+                            if isinstance(rewards, (int, float)):
+                                last_reward = rewards
+
                 except StopIteration:
                     test_complete = True
 
+            # store most recent eval return for this task
+            if last_reward is not None:
+                self._eval_last_return[test_task_run_id] = float(last_reward)
+
             self._logger.info(f"Completed continual eval for task: {test_task_run_id}")
+        
+
+        # ADDED: If requested, lock in the "reference" return for a task at end-of-task boundary
+        if set_ref_task_run_id is not None and set_ref_task_run_id in self._eval_last_return:
+            self._ref_return_end_of_task[set_ref_task_run_id] = self._eval_last_return[set_ref_task_run_id]
+
+        # ADDED: log isolated forgetting scalars
+        # isolated forgetting for task i at time t := ref_end_of_task(i) - current_eval(i)
+        forgetting_vals = []
+        for tid, ref in self._ref_return_end_of_task.items():
+            cur = self._eval_last_return.get(tid, None)
+            if cur is None:
+                continue
+            f = float(ref) - float(cur)
+            forgetting_vals.append(f)
+
+            # per-task forgetting (optional but very useful)
+            summary_writer.add_scalar(f"forgetting/isolated_task/{tid}", f, global_step=total_timesteps)
+
+        if forgetting_vals:
+            avg_f = float(sum(forgetting_vals) / len(forgetting_vals))
+            summary_writer.add_scalar("forgetting/isolated_avg", avg_f, global_step=total_timesteps)
+            summary_writer.flush()
+
 
     def _run(self, policy, summary_writer):
         # Load as necessary
@@ -228,6 +276,13 @@ class Experiment(object):
                 # ADDED: INTEGRATION WITH POLICY HOOKS
                 # Policy hook: task has finished (train or eval)
                 if not task._task_spec.eval_mode:
+                    self._run_continual_eval(
+                        task_run_id,
+                        policy,
+                        summary_writer,
+                        total_train_timesteps + task_timesteps,
+                        set_ref_task_run_id=task_run_id,
+                    )
                     policy.on_task_end(cycle_id=cycle_id, task_run_id=task_run_id)
                 # END ADDED
 

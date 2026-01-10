@@ -1,5 +1,7 @@
 # 🦌 CORA: **Co**ntinual **R**einforcement Learning **A**gents
 
+Update: sbatch files to run on cluster are pushed, redacted username + partition + other personal info. Please replace if using to submit jobs to your own cluster. 
+
 This repository provides a simple way to run continual reinforcement learning experiments in PyTorch, including 
 evaluating existing baseline algorithms, writing your own agents, and specifying custom experiments.
 

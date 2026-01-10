@@ -29,6 +29,9 @@ class InterventionBase:
         # dedicated logger namespace for interventions
         self.logger = ctx.logger.getChild("intervention")
 
+        # logs to be forwarded to TaskBase -> TensorBoard
+        self._pending_logs = []
+
     # Task-boundary hooks (wired via Experiment -> Policy)
     def on_task_start(self, cycle_id: int, task_run_id: int) -> None:
         pass
@@ -49,3 +52,28 @@ class InterventionBase:
         Useful for "every K steps" schedules.
         """
         pass
+
+    # METHODS FOR LOGGING METRICS
+    def _emit_scalar(self, tag: str, value: float, timestep: Optional[int] = None) -> None:
+        """
+        Queue a scalar metric to be logged via TaskBase.
+        If timestep is None, TaskBase will use default_timestep passed to _report_log.
+        """
+        self._pending_logs.append({
+            "type": "scalar",
+            "tag": tag,
+            "value": float(value),
+            **({ "timestep": int(timestep) } if timestep is not None else {})
+        })
+
+    def drain_logs(self):
+        """
+        Return and clear any queued logs since last drain.
+        PPOPolicy.train() will call this and append results to its own logs list.
+        """
+        if not self._pending_logs:
+            return []
+        out = self._pending_logs
+        self._pending_logs = []
+        return out
+

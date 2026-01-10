@@ -93,19 +93,58 @@ class TaskBase(ABC):
                          reward_tag="eval_reward")
 
     def _complete_logs(self, run_id, collected_returns, output_dir, timestep, logs_to_report, summary_writer,
-                       reward_tag):
+                   reward_tag):
+        def _iqm(xs):
+            """
+            Interquartile mean (IQM): mean of the middle 50% of samples.
+            """
+            xs = np.asarray(xs, dtype=np.float64)
+            if xs.size == 0:
+                return np.nan
+            xs = np.sort(xs)
+
+            n = xs.size
+            lo = int(np.floor(0.25 * n))
+            hi = int(np.ceil(0.75 * n))
+
+            # ensure non-empty slice in tiny-sample cases
+            if hi <= lo:
+                lo = 0
+                hi = n
+
+            return float(xs[lo:hi].mean())
+
         if len(collected_returns) > 0:
             # Note that we're logging at the offset - any steps taken during collection don't matter
-            mean_rewards = np.array(collected_returns).mean()
+            returns_arr = np.asarray(collected_returns, dtype=np.float64)
+
+            mean_rewards = float(returns_arr.mean())
+            iqm_rewards = _iqm(returns_arr)
+
             self.logger(output_dir).info(f"{timestep}: {mean_rewards}")
-            logs_to_report.append({"type": "scalar", "tag": reward_tag, "value": mean_rewards,
-                                   "timestep": timestep})
+
+            # existing mean reward tag (keep)
+            logs_to_report.append({
+                "type": "scalar",
+                "tag": reward_tag,
+                "value": mean_rewards,
+                "timestep": timestep
+            })
+
+            # new IQM reward tag (add)
+            logs_to_report.append({
+                "type": "scalar",
+                "tag": f"{reward_tag}_iqm",
+                "value": iqm_rewards,
+                "timestep": timestep
+            })
 
         for log in logs_to_report:
             if summary_writer is not None:
                 self._report_log(summary_writer, log, run_id, default_timestep=timestep)
             else:
                 self.logger(output_dir).info(log)
+
 
     def _compute_timestep_to_log(self, offset, task_timestep, log_with_task_timestep):
         total_timesteps = offset

@@ -187,6 +187,11 @@ class PPOPolicy(PolicyBase):
         logs = [{"type": "scalar", "tag": "value_loss", "value": value_loss},
                 {"type": "scalar", "tag": "action_loss", "value": action_loss},
                 {"type": "scalar", "tag": "dist_entropy", "value": dist_entropy}]
+        
+        # ADDED: include any intervention-emitted metrics (eg. ReDo dormant fraction)
+        if self._intervention is not None and hasattr(self._intervention, "drain_logs"):
+            logs.extend(self._intervention.drain_logs())
+
         return logs
 
     def save(self, output_path_dir, cycle_id, task_id, task_total_steps):

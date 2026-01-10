@@ -237,6 +237,11 @@ class ReDoIntervention(InterventionBase):
         if self.log_interval > 0 and (self._opt_step % self.log_interval == 0):
             if self._ema_initialized:
                 dormant_frac = float((self._ema < self.tau).float().mean().item())
+
+                # forward to TensorBoard via PPOPolicy.train -> TaskBase
+                self._emit_scalar("plasticity/dormant_frac", dormant_frac, timestep=self._opt_step)
+                # self._emit_scalar("plasticity/dormant_pct", 100.0 * dormant_frac)
+
                 self.logger.info(
                     "redo stats | opt_step=%d forward_calls=%d dormant_frac=%.4f buffer_rows_curr=%d",
                     self._opt_step,

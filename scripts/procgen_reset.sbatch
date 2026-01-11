@@ -1,49 +1,49 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=fruitbot-tiny-reset
+#SBATCH --job-name=procgen-reset
+#SBATCH --partition=digitallab
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
-#SBATCH --time=01:00:00
-#SBATCH --chdir=/scratch/%u/cora-procgen-plasticity
-#SBATCH --output=logs/%x_%j.out
-#SBATCH --error=logs/%x_%j.err
+#SBATCH --time=3-00:00:00
+#SBATCH --output=slurm-%x_%j.out
+#SBATCH --error=slurm-%x_%j.err
 
 set -euo pipefail
 
-REPO="/scratch/$USER/cora-procgen-plasticity"
-VENV="/scratch/$USER/venvs/cora"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+VENV="${CORA_VENV:-/scratch/$USER/venvs/cora}"
+EXPERIMENT="${EXPERIMENT:-procgen_6_tasks_5_cycles}"
+NUM_PROCESSES="${NUM_PROCESSES:-8}"
+NUM_STEPS="${NUM_STEPS:-256}"
 
 echo "HOSTNAME: $(hostname)"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-}"
 echo "REPO: $REPO"
+echo "VENV: $VENV"
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}"
 
 cd "$REPO"
+[[ -f "$VENV/bin/activate" ]] || { echo "ERROR: venv not found at $VENV"; exit 1; }
 source "$VENV/bin/activate"
 
 export PYTHONUNBUFFERED=1
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
 
-python - <<'PY'
-import sys, torch
-print("python:", sys.executable)
-print("torch:", torch.__version__, "torch.cuda:", torch.version.cuda)
-print("cuda_available:", torch.cuda.is_available())
-if torch.cuda.is_available():
-    print("device_count:", torch.cuda.device_count())
-    print("device0:", torch.cuda.get_device_name(0))
-PY
-
-RUN_DIR="runs/procgen_fruitbot_tiny/reset/ppo_reset_$(date +%Y%m%d_%H%M%S)"
+RUN_DIR="runs/${EXPERIMENT}/reset/ppo_reset_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$RUN_DIR"
+echo "RUN_DIR: $RUN_DIR"
 
 PYTHONWARNINGS=ignore python main.py \
   --policy ppo \
-  --experiment procgen_fruitbot_tiny \
+  --experiment "$EXPERIMENT" \
   --output-dir "$RUN_DIR" \
-  --num_processes 1 \
-  --num_steps 64 \
+  --num_processes "$NUM_PROCESSES" \
+  --num_steps "$NUM_STEPS" \
   --cuda True \
   --intervention_type reset \
   --intervention_params "{}"

@@ -267,6 +267,125 @@ def get_available_experiments():
             cycle_count=5,
         ),
 
+        # Same as procgen_6_tasks_5_cycles but only 1 cycle
+        "procgen_6_tasks_1_cycle": create_procgen_sequence_loader(
+            "procgen_6_tasks_1_cycle",
+            ["climber-v0",
+             "dodgeball-v0",
+             "ninja-v0",
+             "starpilot-v0",
+             "bigfish-v0",
+             "fruitbot-v0"],
+            num_timesteps=5e6,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=True,
+            eval_task_override_params=dict(
+                num_levels=0,
+            ),
+            continual_testing_freq=0.25e6,
+            cycle_count=1,
+        ),
+
+        "procgen_3_tasks_2_cycles_5m": create_procgen_sequence_loader(
+            "procgen_3_tasks_2_cycles_5m",
+            ["climber-v0",
+             "dodgeball-v0",
+             "fruitbot-v0"],
+            num_timesteps=5e6,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=True,
+            eval_task_override_params=dict(
+                num_levels=0,
+            ),
+            continual_testing_freq=0.25e6,
+            cycle_count=2,
+        ),
+
+        # Same 3 tasks but only 1 cycle (faster convergence study).
+        "procgen_3_tasks_1_cycle_5m": create_procgen_sequence_loader(
+            "procgen_3_tasks_1_cycle_5m",
+            ["climber-v0",
+             "dodgeball-v0",
+             "fruitbot-v0"],
+            num_timesteps=5e6,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=True,
+            eval_task_override_params=dict(
+                num_levels=0,
+            ),
+            continual_testing_freq=0.25e6,
+            cycle_count=1,
+        ),
+
+        # Variant of the 3-task set with eval enabled; recommended small tuning target
+        "procgen_3_tasks_1_cycle_5m_tuning": create_procgen_sequence_loader(
+            "procgen_3_tasks_1_cycle_5m_tuning",
+            ["climber-v0",
+             "dodgeball-v0",
+             "fruitbot-v0"],
+            num_timesteps=5e6,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=True,
+            eval_task_override_params=dict(
+                num_levels=0,
+            ),
+            continual_testing_freq=0.5e6,
+            cycle_count=1,
+        ),
+
+        # Same as above but with eval tasks removed for faster sweeps/debug
+        "procgen_3_tasks_1_cycle_5m_noeval": create_procgen_sequence_loader(
+            "procgen_3_tasks_1_cycle_5m_noeval",
+            ["climber-v0",
+             "dodgeball-v0",
+             "fruitbot-v0"],
+            num_timesteps=5e6,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=False,
+            continual_testing_freq=10**12,
+            cycle_count=1,
+        ),
+
+        # Same 3 tasks with minimal timesteps for quick debugging/sanity checks.
+        "procgen_3_tasks_1_cycle_10k_debug": create_procgen_sequence_loader(
+            "procgen_3_tasks_1_cycle_10k_debug",
+            ["climber-v0",
+             "dodgeball-v0",
+             "fruitbot-v0"],
+            num_timesteps=1e4,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=True,
+            eval_task_override_params=dict(
+                num_levels=0,
+            ),
+            continual_testing_freq=10**12,  # Disable continual eval spam in debug mode
+            cycle_count=1,
+        ),
+
         "procgen_climber_fixed_seq": create_procgen_sequence_loader(
             "procgen_climber_fixed_seq",
             ["climber-v0" for _ in range(4)],

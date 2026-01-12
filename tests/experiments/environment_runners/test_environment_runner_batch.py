@@ -335,3 +335,47 @@ class TestEnvironmentRunnerBatch(object):
         assert mock_env.reset_count == 1, f"Mock env reset an incorrect number of times: {mock_env.reset_count}"
         assert len(mock_env.actions_executed) == 100, "Mock env.step not called a sufficient number of times"
         assert np.all(np.array(mock_env.actions_executed) == 3), "Incorrect action taken by the first env"
+    def test_cleanup_without_initialization_does_not_crash(self):
+        """
+        Regression test: cleanup() should not crash even if environment was never initialized.
+        This happens when collect_data() is never called or fails before _initialize_envs().
+        """
+        # Arrange
+        mock_policy = MockPolicy(MockPolicyConfig(), action_spaces=None, observation_space=None)
+        runner = EnvironmentRunnerBatch(policy=mock_policy, num_parallel_envs=2, timesteps_per_collection=10)
+        task_spec = TaskSpec(task_id=0, action_space_id=0, preprocessor=MockPreprocessor(), 
+                           env_spec=lambda: MockEnv(), num_timesteps=100, eval_mode=False)
+
+        # Act & Assert: Should not raise AttributeError
+        # This would previously crash with: AttributeError: 'NoneType' object has no attribute 'close'
+        try:
+            runner.cleanup(task_spec)
+        except AttributeError as e:
+            if "'NoneType' object has no attribute 'close'" in str(e):
+                raise AssertionError("cleanup() crashed when _parallel_env was None - the bug is not fixed!")
+            raise
+
+    def test_cleanup_is_idempotent(self, monkeypatch):
+        """
+        Regression test: cleanup() should be safe to call multiple times.
+        """
+        # Arrange
+        def mock_compute_action(_, observation, task_id, action_space_id, last_timestep_data, eval_mode):
+            action = [3] * len(observation)
+            return action, MockTimestepData(data_to_store=(observation, task_id, action_space_id, eval_mode))
+
+        mock_policy = MockPolicy(MockPolicyConfig(), action_spaces=None, observation_space=None)
+        monkeypatch.setattr(MockPolicy, "compute_action", mock_compute_action)
+        runner = EnvironmentRunnerBatch(policy=mock_policy, num_parallel_envs=2, timesteps_per_collection=10)
+        
+        mock_env = MockEnv()
+        task_spec = TaskSpec(task_id=0, action_space_id=0, preprocessor=MockPreprocessor(), 
+                           env_spec=lambda: mock_env, num_timesteps=100, eval_mode=False)
+
+        # Initialize the environment
+        runner.collect_data(task_spec)
+
+        # Act & Assert: cleanup should be callable multiple times without error
+        runner.cleanup(task_spec)  # First call
+        runner.cleanup(task_spec)  # Second call - should not crash
+        runner.cleanup(task_spec)  # Third call - should not crash

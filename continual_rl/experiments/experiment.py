@@ -1,5 +1,7 @@
 import os
 import json
+import numpy as np
+import torch
 from continual_rl.experiments.run_metadata import RunMetadata
 from continual_rl.utils.utils import Utils
 from continual_rl.utils.common_exceptions import OutputDirectoryNotSetException
@@ -44,6 +46,10 @@ class Experiment(object):
         self._eval_last_return = {}
         self._ref_return_end_of_task = {}
 
+        # ADDED: tracking effective rank metrics
+        self._effective_rank_history = []  # List of (timestep, layer_name, effective_rank) tuples
+        self._effective_rank_by_layer = {}  # Most recent effective rank per layer
+
     def set_output_dir(self, output_dir):
         self._output_dir = output_dir
 
@@ -61,6 +67,190 @@ class Experiment(object):
     def _console(self, msg: str) -> None:
         # clean human-readable terminal output (no timestamps, no logger prefixes)
         print(msg, flush=True)
+
+    # ADDED: Effective rank computation for plasticity metrics
+    @staticmethod
+    def _compute_effective_rank_from_matrix(matrix: np.ndarray, epsilon: float = 1e-10) -> float:
+        """
+        Compute the effective rank of a matrix using the entropy-based formula.
+        
+        Effective rank = exp(H) where H is the entropy of normalized singular values.
+        H = -sum(p_i * log(p_i)) where p_i = sigma_i / sum(sigma_j)
+        
+        This measures the "effective dimensionality" of the matrix.
+        A higher effective rank indicates more distributed singular values (more "plastic").
+        A lower effective rank indicates more concentrated singular values (potential plasticity loss).
+        
+        :param matrix: 2D numpy array (weight matrix)
+        :param epsilon: Small value to avoid log(0)
+        :return: Effective rank (float between 1 and min(rows, cols))
+        """
+        if matrix.ndim != 2:
+            return None
+        
+        # Compute singular values
+        try:
+            singular_values = np.linalg.svd(matrix, compute_uv=False)
+        except np.linalg.LinAlgError:
+            return None
+        
+        # Filter out near-zero singular values
+        singular_values = singular_values[singular_values > epsilon]
+        
+        if len(singular_values) == 0:
+            return 0.0
+        
+        # Normalize to get probability distribution
+        total = np.sum(singular_values)
+        if total < epsilon:
+            return 0.0
+        
+        p = singular_values / total
+        
+        # Compute entropy: H = -sum(p_i * log(p_i))
+        # Use natural log for standard entropy
+        entropy = -np.sum(p * np.log(p + epsilon))
+        
+        # Effective rank = exp(H)
+        effective_rank = np.exp(entropy)
+        
+        return float(effective_rank)
+
+    def _compute_effective_rank(self, policy, total_timesteps: int, summary_writer) -> dict:
+        """
+        Compute effective rank for all applicable weight matrices in the policy's model.
+        Effective rank measures the "effective dimensionality" of weight matrices and is used
+        to track plasticity loss in continual learning.
+        
+        :param policy: The policy object containing the neural network
+        :param total_timesteps: Current total timesteps (for logging)
+        :param summary_writer: Tensorboard summary writer
+        :return: Dictionary mapping layer names to their effective ranks
+        """
+        effective_ranks = {}
+        
+        # Try to access the model from the policy - handle different policy types
+        model = None
+        
+        # PPO and other single-model policies
+        if hasattr(policy, '_actor_critic') and policy._actor_critic is not None:
+            model = policy._actor_critic
+        
+        # Impala and other trainer-based policies
+        elif hasattr(policy, 'impala_trainer'):
+            trainer = policy.impala_trainer
+            # Try learner_model first (on device, actively used for training)
+            if hasattr(trainer, 'learner_model') and trainer.learner_model is not None:
+                model = trainer.learner_model
+            elif hasattr(trainer, 'actor_model') and trainer.actor_model is not None:
+                model = trainer.actor_model
+        
+        # Fallback: try common attribute names
+        if model is None:
+            model_attr_names = ['model', 'network', 'actor_critic', 'net', 'policy_net', 'q_network', 'actor', 'actor_net']
+            for attr_name in model_attr_names:
+                if hasattr(policy, attr_name):
+                    attr = getattr(policy, attr_name)
+                    if attr is not None:
+                        model = attr
+                        break
+        
+        if model is None:
+            return effective_ranks
+        
+        # Iterate through named parameters and compute effective rank for weight matrices
+        try:
+            named_params = list(model.named_parameters()) if hasattr(model, 'named_parameters') else []
+            
+            if not named_params:
+                return effective_ranks
+            
+            layer_ranks = []
+            
+            for name, param in named_params:
+                # Only compute for 2D weight matrices (skip biases, embeddings, etc.)
+                if param.dim() == 2 and 'weight' in name.lower():
+                    weight_matrix = param.detach().cpu().numpy()
+                    eff_rank = self._compute_effective_rank_from_matrix(weight_matrix)
+                    
+                    if eff_rank is not None:
+                        effective_ranks[name] = eff_rank
+                        layer_ranks.append(eff_rank)
+                        self._effective_rank_history.append((total_timesteps, name, eff_rank))
+                
+                # Also handle Conv2d layers by reshaping to 2D
+                elif param.dim() == 4 and 'weight' in name.lower():
+                    # Conv weights are (out_channels, in_channels, H, W)
+                    # Reshape to (out_channels, in_channels * H * W)
+                    weight = param.detach().cpu().numpy()
+                    out_ch = weight.shape[0]
+                    reshaped = weight.reshape(out_ch, -1)
+                    eff_rank = self._compute_effective_rank_from_matrix(reshaped)
+                    
+                    if eff_rank is not None:
+                        effective_ranks[name] = eff_rank
+                        layer_ranks.append(eff_rank)
+                        self._effective_rank_history.append((total_timesteps, name, eff_rank))
+            
+            # Log only aggregate statistics
+            if layer_ranks:
+                avg_rank = float(np.mean(layer_ranks))
+                min_rank = float(np.min(layer_ranks))
+                max_rank = float(np.max(layer_ranks))
+                
+                summary_writer.add_scalar("effective_rank/avg", avg_rank, global_step=total_timesteps)
+                summary_writer.add_scalar("effective_rank/min", min_rank, global_step=total_timesteps)
+                summary_writer.add_scalar("effective_rank/max", max_rank, global_step=total_timesteps)
+                summary_writer.flush()
+            
+        except Exception as e:
+            self._logger.warning(f"Error computing effective rank: {e}")
+        
+        # Update most recent values
+        self._effective_rank_by_layer = effective_ranks
+        
+        return effective_ranks
+
+    def get_effective_rank_history(self) -> list:
+        """
+        Get the full history of effective rank measurements.
+        
+        :return: List of (timestep, layer_name, effective_rank) tuples
+        """
+        return self._effective_rank_history.copy()
+
+    def get_current_effective_ranks(self) -> dict:
+        """
+        Get the most recent effective rank values per layer.
+        
+        :return: Dictionary mapping layer names to effective rank values
+        """
+        return self._effective_rank_by_layer.copy()
+
+    def save_effective_rank_history(self, filepath: str = None) -> str:
+        """
+        Save effective rank history to a JSON file.
+        
+        :param filepath: Path to save the file. If None, saves to output_dir/effective_rank_history.json
+        :return: The filepath where data was saved
+        """
+        if filepath is None:
+            filepath = os.path.join(self.output_dir, "effective_rank_history.json")
+        
+        # Convert history to a more structured format for JSON
+        history_data = {
+            "measurements": [
+                {"timestep": t, "layer": layer, "effective_rank": rank}
+                for t, layer, rank in self._effective_rank_history
+            ],
+            "latest_by_layer": self._effective_rank_by_layer
+        }
+        
+        with open(filepath, 'w') as f:
+            json.dump(history_data, f, indent=2)
+        
+        self._logger.info(f"Saved effective rank history to {filepath}")
+        return filepath
 
     @classmethod
     def _get_action_spaces(self, tasks):
@@ -88,6 +278,9 @@ class Experiment(object):
         return common_attribute
 
     def _run_continual_eval(self, task_run_id, policy, summary_writer, total_timesteps, set_ref_task_run_id=None):
+        # ADDED: Compute effective rank at each continual eval point
+        self._compute_effective_rank(policy, total_timesteps, summary_writer)
+
         # Run a small amount of eval on all non-eval, not-currently-running tasks
         for test_task_run_id, test_task in enumerate(self.tasks):
             # not checking test_task._task_spec.eval_mode anymore since some eval tasks
@@ -295,6 +488,10 @@ class Experiment(object):
 
             # On the next cycle, start from the beginning again (regardless of where we loaded from)
             start_task_id = 0
+
+        # ADDED: Save effective rank history at end of experiment
+        if self._effective_rank_history:
+            self.save_effective_rank_history()
 
     def try_run(self, policy, summary_writer):
         try:

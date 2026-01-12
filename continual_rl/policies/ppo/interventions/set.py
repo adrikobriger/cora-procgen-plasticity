@@ -127,7 +127,8 @@ class SETIntervention(InterventionBase):
                 keep = max(1, min(total, keep))
                 flat = m.view(-1)
                 flat.zero_()
-                idx = torch.randperm(total, generator=self._g, device=flat.device)[:keep]
+                # Generate on CPU then move to device (generators don't work on CUDA)
+                idx = torch.randperm(total, generator=self._g)[:keep].to(flat.device)
                 flat[idx] = 1.0
                 self._masks[item.name] = flat.view_as(m)
 
@@ -209,7 +210,7 @@ class SETIntervention(InterventionBase):
                         break
                     m_flat = self._masks[name].view(-1)
                     take = min(remaining, tie_idx.numel())
-                    perm = torch.randperm(tie_idx.numel(), generator=self._g, device=tie_idx.device)[:take]
+                    perm = torch.randperm(tie_idx.numel(), generator=self._g)[:take].to(tie_idx.device)
                     m_flat[tie_idx[perm]] = 0.0
                     remaining -= take
 
@@ -241,7 +242,7 @@ class SETIntervention(InterventionBase):
                 if alloc == 0:
                     continue
                 m_flat = self._masks[name].view(-1)
-                perm = torch.randperm(inactive_idx.numel(), generator=self._g, device=inactive_idx.device)[:alloc]
+                perm = torch.randperm(inactive_idx.numel(), generator=self._g)[:alloc].to(inactive_idx.device)
                 m_flat[inactive_idx[perm]] = 1.0
                 regrow -= alloc
 
@@ -256,7 +257,7 @@ class SETIntervention(InterventionBase):
                     if inactive_idx2.numel() == 0:
                         continue
                     take = min(regrow, inactive_idx2.numel())
-                    perm = torch.randperm(inactive_idx2.numel(), generator=self._g, device=inactive_idx2.device)[:take]
+                    perm = torch.randperm(inactive_idx2.numel(), generator=self._g)[:take].to(inactive_idx2.device)
                     m_flat[inactive_idx2[perm]] = 1.0
                     regrow -= take
 

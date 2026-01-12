@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import logging
 from collections import deque
 from continual_rl.experiments.environment_runners.parallel_env import ParallelEnv
 from continual_rl.experiments.environment_runners.environment_runner_base import EnvironmentRunnerBase
@@ -31,6 +32,8 @@ class EnvironmentRunnerBatch(EnvironmentRunnerBase):
         self._observations_to_render = []
         self._timesteps_since_last_render = 0
         self._total_timesteps = 0
+        
+        self._logger = logging.getLogger(__name__)
 
     def _preprocess_raw_observations(self, preprocessor, raw_observations):
         return preprocessor.preprocess(raw_observations)
@@ -181,4 +184,21 @@ class EnvironmentRunnerBatch(EnvironmentRunnerBase):
         return num_timesteps, [per_timestep_data], returns_to_report, logs_to_report
 
     def cleanup(self, task_spec):
-        self._parallel_env.close()
+        """
+        Safely cleanup the parallel environment. Idempotent and handles None gracefully.
+        Called even if environment construction failed, so must be robust.
+        """
+        if self._parallel_env is None:
+            self._logger.debug("Cleanup called but parallel environment was never initialized. "
+                             "This can occur if environment construction failed early.")
+            return
+        
+        try:
+            self._parallel_env.close()
+            self._logger.debug("Successfully closed parallel environment.")
+        except Exception as e:
+            self._logger.warning(f"Exception occurred while closing parallel environment: {e}")
+        finally:
+            # Clear the reference to prevent accidental reuse or double-close
+            self._parallel_env = None
+

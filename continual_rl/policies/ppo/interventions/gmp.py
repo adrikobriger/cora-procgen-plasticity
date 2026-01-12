@@ -31,9 +31,8 @@ class GMPIntervention(InterventionBase):
 
         p = ctx.params or {}
         self.final_sparsity: float = float(p.get("final_sparsity", 0.80))
-        self.tasks_per_cycle: int = int(p.get("tasks_per_cycle", 6))
+        self.tasks_per_cycle: int = int(p.get("tasks_per_cycle", 3))
         self.prune_cycle: int = int(p.get("prune_cycle", 0))  # prune only on this cycle
-        self.global_prune: bool = bool(p.get("global_prune", True))
 
         # boundary pruning counter (counts only when we actually prune)
         self._boundary_prune_step: int = 0
@@ -70,7 +69,7 @@ class GMPIntervention(InterventionBase):
             if p.dim() < 2:
                 continue
 
-            # EXCLUDE CNN (keep post-CNN Linear layers prunable)
+            # EXCLUDE CNN (keep post-CNN FC layer)
             # For us, conv weights are 4D; the post-CNN FC is 2D but also lives in base.main.
             if name.startswith("base.main.") and p.dim() == 4:
                 continue

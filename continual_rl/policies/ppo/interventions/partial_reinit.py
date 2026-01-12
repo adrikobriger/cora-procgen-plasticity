@@ -19,6 +19,7 @@ class PartialReinitIntervention(InterventionBase):
 
     @staticmethod
     def _snapshot_params(module: nn.Module) -> Dict[str, torch.Tensor]:
+        # Save a copy of all trainable parameters (for proving reinit happened)
         return {
             name: p.detach().clone()
             for name, p in module.named_parameters()
@@ -27,6 +28,7 @@ class PartialReinitIntervention(InterventionBase):
 
     @staticmethod
     def _mean_abs_param_delta(module: nn.Module, before: Dict[str, torch.Tensor]) -> float:
+        # Method to verify that reinit actually changed weights
         with torch.no_grad():
             total = 0.0
             count = 0
@@ -41,7 +43,6 @@ class PartialReinitIntervention(InterventionBase):
 
     @staticmethod
     def _reset_linear(layer: nn.Linear) -> None:
-        # match ResetIntervention init style
         init.orthogonal_(layer.weight)
         if layer.bias is not None:
             init.constant_(layer.bias, 0.0)
@@ -49,8 +50,6 @@ class PartialReinitIntervention(InterventionBase):
     def on_task_end(self, cycle_id: int, task_run_id: int) -> None:
         ac = self.ctx.actor_critic
 
-        # In model.py, actor head is stored directly as a Linear:
-        # self.dist = ...[0].linear
         if not hasattr(ac, "dist"):
             raise AttributeError("actor_critic has no attribute 'dist' (expected policy head).")
 
@@ -70,7 +69,7 @@ class PartialReinitIntervention(InterventionBase):
             if p in opt.state:
                 opt.state[p].clear()
 
-        # 4) rollout bookkeeping (safe)
+        # 4) rollout bookkeeping
         self.ctx.rollout_storage.after_update()
 
         # 5) log a sanity metric

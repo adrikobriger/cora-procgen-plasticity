@@ -96,11 +96,11 @@ class PPO():
                 loss = (value_loss * self.value_loss_coef + action_loss -
                         dist_entropy * self.entropy_coef)
 
+                loss.backward()
+
                 # intervention hook: before backward/step
                 if self.intervention is not None:
                     self.intervention.before_optimizer_step()
-
-                loss.backward()
 
                 nn.utils.clip_grad_norm_(self.actor_critic.parameters(),
                                          self.max_grad_norm)

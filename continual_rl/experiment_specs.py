@@ -447,6 +447,25 @@ def get_available_experiments():
             cycle_count=3,
             start_level_ids=[16, 25, 29, 31]
         ),
+
+        # Single task experiment for 5M timesteps
+        "procgen_1_task_1_cycle_5m": create_procgen_sequence_loader(
+            "procgen_1_task_1_cycle_5m",
+            ["climber-v0"],
+            num_timesteps=5e6,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=True,
+            eval_task_override_params=dict(
+                num_levels=0,
+            ),
+            continual_testing_freq=0.25e6,
+            cycle_count=1,
+        ),
+
         # ===============================
         # ============ MiniHack =========
         # ===============================

@@ -1,0 +1,14 @@
+{
+    "learning_rate": 9.08797885393782e-05,
+    "clip_param": 0.24543104589096693,
+    "entropy_coef": 0.00014617271097693327,
+    "value_loss_coef": 1.438857591076713,
+    "gamma": 0.9903404728180674,
+    "gae_lambda": 0.9558539973879979,
+    "num_steps": 256,
+    "num_mini_batch": 4,
+    "ppo_epoch": 4,
+    "max_grad_norm": 0.42235187217424597,
+    "use_gae": true,
+    "num_processes": 1
+}

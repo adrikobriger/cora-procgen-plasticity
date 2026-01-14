@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=tune-ppo-baseline
+#SBATCH --job-name=tune-interventions-debug
 #SBATCH --partition=digitallab
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --mem=32G
-#SBATCH --time=3-00:00:00
+#SBATCH --mem=16G
+#SBATCH --time=0-02:00:00
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 
@@ -15,20 +15,19 @@ set -euo pipefail
 REPO="/scratch/s5579783/cora-procgen-plasticity"
 VENV="/scratch/s5579783/venvs/cora"
 
-EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_1_cycle_5m_tuning}"
-TRIALS="${TRIALS:-20}"
+EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_1_cycle_10k_debug}"
+METHOD="${METHOD:-gmp}"
+TRIALS="${TRIALS:-3}"
 SEARCH="${SEARCH:-random}"
-BUDGET_OVERRIDE="${BUDGET_OVERRIDE:-100000}"
+BUDGET_OVERRIDE="${BUDGET_OVERRIDE:-5000}"
 EVAL_MODE="${EVAL_MODE:-final_only}"
-EPISODES_PER_TASK="${EPISODES_PER_TASK:-10}"
-OBJECTIVE="${OBJECTIVE:-iqm}"
+EPISODES_PER_TASK="${EPISODES_PER_TASK:-5}"
+OBJECTIVE="${OBJECTIVE:-mean}"
 NUM_PROCESSES="${NUM_PROCESSES:-1}"
-SEED="${SEED:-0}"                 # used for candidate generation fallback
-SEEDS="${SEEDS:-0,1,2}"            # seeds per trial (comma-separated)
+SEED="${SEED:-0}"
+PPO_CONFIG="${PPO_CONFIG:-configs/procgen/tuned_ppo_hyperparams.json}"
 
 # Setup
-# NOTE: Slurm needs the 'logs/' directory to exist at submit time since --output/--error point there.
-# If you submit from $REPO, ensure this exists beforehand: mkdir -p "$REPO/logs"
 mkdir -p "$REPO/logs"
 cd "$REPO"
 source "$VENV/bin/activate"
@@ -37,12 +36,13 @@ export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-echo "PPO Baseline Hyperparameter Tuning!"
+echo "Intervention Hyperparameter Tuning (DEBUG!):"
 echo "HOSTNAME: $(hostname)"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-local}"
 echo "REPO: $REPO"
 echo "------------------------------------------------------------"
 echo "EXPERIMENT: $EXPERIMENT"
+echo "METHOD: $METHOD"
 echo "TRIALS: $TRIALS"
 echo "SEARCH: $SEARCH"
 echo "BUDGET_OVERRIDE: $BUDGET_OVERRIDE"
@@ -50,8 +50,8 @@ echo "EVAL_MODE: $EVAL_MODE"
 echo "EPISODES_PER_TASK: $EPISODES_PER_TASK"
 echo "OBJECTIVE: $OBJECTIVE"
 echo "NUM_PROCESSES: $NUM_PROCESSES"
-echo "SEED (candidate gen): $SEED"
-echo "SEEDS (per trial): $SEEDS"
+echo "SEED: $SEED"
+echo "PPO_CONFIG: $PPO_CONFIG"
 echo "------------------------------------------------------------"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-not set}"
 
@@ -66,11 +66,12 @@ if torch.cuda.is_available():
     print("device0:", torch.cuda.get_device_name(0))
 PY
 
-echo "Starting PPO tuning..."
+echo "Starting Intervention tuning (DEBUG)..."
 
-PYTHONWARNINGS=ignore python tools/tune_ppo.py \
+PYTHONWARNINGS=ignore python tools/tune_interventions.py \
     --experiment "$EXPERIMENT" \
-    --policy ppo \
+    --method "$METHOD" \
+    --ppo_config "$PPO_CONFIG" \
     --trials "$TRIALS" \
     --search "$SEARCH" \
     --budget_override "$BUDGET_OVERRIDE" \
@@ -79,9 +80,8 @@ PYTHONWARNINGS=ignore python tools/tune_ppo.py \
     --objective "$OBJECTIVE" \
     --num_processes "$NUM_PROCESSES" \
     --seed "$SEED" \
-    --seeds "$SEEDS" \
-    --strict_verify \
     --output_root "runs/tuning"
 
-echo "PPO tuning complete!"
-echo "Check runs/tuning/$EXPERIMENT/ppo_tune/ for results"
+echo "Intervention tuning (DEBUG) complete!"
+echo "Check runs/tuning/$EXPERIMENT/$METHOD/ for results"
+

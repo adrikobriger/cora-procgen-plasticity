@@ -16,16 +16,19 @@ REPO="/scratch/s5579783/cora-procgen-plasticity"
 VENV="/scratch/s5579783/venvs/cora"
 
 EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_1_cycle_10k_debug}"
-TRIALS="${TRIALS:-3}"
+TRIALS="${TRIALS:-2}"
 SEARCH="${SEARCH:-random}"
 BUDGET_OVERRIDE="${BUDGET_OVERRIDE:-5000}"
 EVAL_MODE="${EVAL_MODE:-final_only}"
 EPISODES_PER_TASK="${EPISODES_PER_TASK:-5}"
-OBJECTIVE="${OBJECTIVE:-mean}"
+OBJECTIVE="${OBJECTIVE:-iqm}"
 NUM_PROCESSES="${NUM_PROCESSES:-1}"
-SEED="${SEED:-0}"
+SEED="${SEED:-0}"               # candidate generation fallback
+SEEDS="${SEEDS:-0,1}"           # small multi-seed sanity check
 
 # Setup
+# NOTE: Slurm needs the 'logs/' directory to exist at submit time since --output/--error point there.
+# If you submit from $REPO, ensure this exists beforehand: mkdir -p "$REPO/logs"
 mkdir -p "$REPO/logs"
 cd "$REPO"
 source "$VENV/bin/activate"
@@ -34,7 +37,7 @@ export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-echo "PPO Baseline Hyperparameter Tuning (DEBUG!):"
+echo "PPO Baseline Hyperparameter Tuning (DEBUG!)"
 echo "HOSTNAME: $(hostname)"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-local}"
 echo "REPO: $REPO"
@@ -47,7 +50,8 @@ echo "EVAL_MODE: $EVAL_MODE"
 echo "EPISODES_PER_TASK: $EPISODES_PER_TASK"
 echo "OBJECTIVE: $OBJECTIVE"
 echo "NUM_PROCESSES: $NUM_PROCESSES"
-echo "SEED: $SEED"
+echo "SEED (candidate gen): $SEED"
+echo "SEEDS (per trial): $SEEDS"
 echo "------------------------------------------------------------"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-not set}"
 
@@ -75,6 +79,7 @@ PYTHONWARNINGS=ignore python tools/tune_ppo.py \
     --objective "$OBJECTIVE" \
     --num_processes "$NUM_PROCESSES" \
     --seed "$SEED" \
+    --seeds "$SEEDS" \
     --strict_verify \
     --output_root "runs/tuning"
 

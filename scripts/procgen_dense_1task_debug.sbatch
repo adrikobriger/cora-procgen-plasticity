@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=procgen-preinit-3t1c
+#SBATCH --job-name=procgen-dense-3t1c
 #SBATCH --partition=digitallab
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -15,7 +15,7 @@ set -euo pipefail
 REPO="/scratch/s5579783/cora-procgen-plasticity"
 VENV="/scratch/s5579783/venvs/cora"
 
-EXPERIMENT="procgen_3_tasks_1_cycle_5m"
+EXPERIMENT="procgen_1_task_1_cycle_5m"
 NUM_PROCESSES=1
 NUM_STEPS=256
 
@@ -33,7 +33,17 @@ echo "REPO: $REPO"
 echo "EXPERIMENT: $EXPERIMENT"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}"
 
-RUN_DIR="runs/${EXPERIMENT}/partial_reinit/ppo_partial_reinit_$(date +%Y%m%d_%H%M%S)"
+python - <<'PY'
+import sys, torch
+print("python:", sys.executable)
+print("torch:", torch.__version__, "torch.cuda:", torch.version.cuda)
+print("cuda_available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("device_count:", torch.cuda.device_count())
+    print("device0:", torch.cuda.get_device_name(0))
+PY
+
+RUN_DIR="runs/${EXPERIMENT}/dense/ppo_dense_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$RUN_DIR"
 echo "RUN_DIR: $RUN_DIR"
 
@@ -44,6 +54,4 @@ PYTHONWARNINGS=ignore python main.py \
   --load-config "configs/procgen/tuned_ppo_hyperparams.json" \
   --num_processes "$NUM_PROCESSES" \
   --num_steps "$NUM_STEPS" \
-  --cuda True \
-  --intervention_type partial_reinit \
-  --intervention_params "{}"
+  --cuda True

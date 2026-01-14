@@ -39,6 +39,12 @@ class ArgparseManager(object):
             default=None,
             help="JSON string for intervention parameters, e.g. '{\"pct\": 0.2}'"
         )
+        command_line_parser.add_argument(
+            "--load-config",
+            type=str,
+            default=None,
+            help="Path to a JSON file containing default hyperparameters to load."
+        )
 
         return command_line_parser
 
@@ -88,6 +94,18 @@ class ArgparseManager(object):
 
             # Extras is a list in the form ["--arg1", "val1", "--arg2", "val2"]. Convert it to a dictionary
             raw_experiment = {extras[i].replace('--', ''): extras[i + 1] for i in range(0, len(extras), 2)}
+
+            # ADDED: Load base config if specified
+            if getattr(args, "load_config", None) is not None:
+                print(f"Loading hyperparameters from {args.load_config}")
+                with open(args.load_config, 'r') as f:
+                    file_config = json.load(f)
+                
+                # Merge file_config into raw_experiment, but let raw_experiment (CLI args) take precedence
+                # So we update file_config with raw_experiment, effectively using file_config as defaults
+                for key, value in raw_experiment.items():
+                    file_config[key] = value
+                raw_experiment = file_config
 
             # ADDED: intervention CLI
             if getattr(args, "intervention_type", None) is not None:

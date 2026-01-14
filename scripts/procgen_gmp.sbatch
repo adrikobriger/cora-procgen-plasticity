@@ -44,6 +44,7 @@ PYTHONWARNINGS=ignore python main.py \
   --policy ppo \
   --experiment "$EXPERIMENT" \
   --output-dir "$RUN_DIR" \
+  --load-config "configs/procgen/tuned_ppo_hyperparams.json" \
   --num_processes "$NUM_PROCESSES" \
   --num_steps "$NUM_STEPS" \
   --cuda True \

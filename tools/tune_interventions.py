@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """
 PURPOSE:
-    Tune Intervention hyperparameters (SET, GMP, etc.) using fixed PPO hyperparameters.
+    Tune intervention hyperparameters (SET, GMP, ReDo, etc.) while keeping PPO hyperparameters fixed.
 
-SNAPSHOTS & FORGETTING:
-    - After each training task completes, we run a lightweight eval snapshot on eval tasks (or all tasks if none
-      marked eval) and store aggregate mean/IQM plus per-task means/IQM. These snapshots enable computing
-      continual-learning metrics like forgetting.
-    - Forgetting (per spec): for each train task, take the best snapshot mean after that task was learned minus the
-      final eval mean; average across train tasks (and likewise for IQM). Lower is better.
+SNAPSHOTS & FORGETTING (DEFENSIBLE):
+    - After each training task completes, we run a lightweight evaluation snapshot on the TRAIN tasks
+      (because forgetting is defined on the train tasks).
+    - Forgetting (per spec): for each train task, take the best snapshot return AFTER that task was learned
+      (i.e., from the first post_task snapshot for that task onward) minus the final return on that task.
+      Average across train tasks. Lower is better.
 
 OBJECTIVES:
-    - mean / iqm : maximize final aggregate return (existing behavior).
-    - forgetting : minimize average forgetting.
-    - composite : maximize (final_mean - lambda_forgetting * forgetting_mean). lambda_forgetting is configurable.
+    - mean / iqm      : maximize final aggregate return (mean or IQM) across eval tasks.
+    - forgetting      : minimize average forgetting (mean or IQM, consistent with primary metric).
+    - composite       : maximize (final_primary - lambda_forgetting * forgetting_primary)
+
+ROBUSTNESS:
+    - Each intervention candidate is evaluated across multiple seeds (trial_seeds) and aggregated as mean ± stderr.
 """
 
 import sys
@@ -39,6 +42,48 @@ from continual_rl.available_policies import get_available_policies
 from continual_rl.experiment_specs import get_available_experiments
 from continual_rl.experiments.tasks.task_base import TaskBase
 from continual_rl.experiments.tasks.task_spec import TaskSpec
+
+
+# -------------------------
+# Small utilities
+# -------------------------
+
+def _parse_int_list(s: str) -> List[int]:
+    s = (s or "").strip()
+    if not s:
+        return []
+    return [int(x.strip()) for x in s.split(",") if x.strip()]
+
+
+def _stderr(xs: List[float]) -> float:
+    xs = [x for x in xs if x is not None and not math.isnan(x)]
+    if len(xs) <= 1:
+        return float("nan")
+    arr = np.asarray(xs, dtype=np.float64)
+    return float(arr.std(ddof=1) / np.sqrt(len(arr)))
+
+
+def _mean(xs: List[float]) -> float:
+    xs = [x for x in xs if x is not None and not math.isnan(x)]
+    if not xs:
+        return float("nan")
+    return float(np.mean(np.asarray(xs, dtype=np.float64)))
+
+
+def _is_eval_task(task) -> bool:
+    """Explicit eval tasks: flagged eval_mode or id suffixed with _eval (task or spec)."""
+    if getattr(task, "eval_mode", False):
+        return True
+    if getattr(task, "task_id", "").endswith("_eval"):
+        return True
+    if hasattr(task, "_task_spec") and getattr(task._task_spec, "eval_mode", False):
+        return True
+    return False
+
+
+def _is_train_task(task) -> bool:
+    """Train tasks are those not marked eval and without _eval suffix."""
+    return not _is_eval_task(task)
 
 
 # -------------------------
@@ -158,7 +203,7 @@ def build_candidates(method: str, search: str, trials: int, seed: int, grid_shuf
     if search == "grid":
         combos = _grid(grid_space, grid_shuffle, rng)
         return combos[:trials] if trials is not None else combos
-    
+
     return _random_sample(rng, rand_space, trials)
 
 
@@ -185,7 +230,7 @@ def _validate_minibatch_geometry(num_steps: int, num_processes: int, num_mini_ba
 
 
 # -------------------------
-# Evaluation Helpers (Matched to tune_ppo.py)
+# Evaluation Helpers
 # -------------------------
 
 def _iqm(xs: List[float]) -> float:
@@ -201,21 +246,11 @@ def _iqm(xs: List[float]) -> float:
     return float(arr[lo:hi].mean())
 
 
-def _select_eval_tasks(experiment) -> List[Any]:
-    eval_tasks = []
-    for task in experiment.tasks:
-        # Check task object itself first (make_procgen_task sets eval_mode attr)
-        if getattr(task, "eval_mode", False):
-            eval_tasks.append(task)
-        # Also check name based convention
-        elif task.task_id.endswith("_eval"):
-            eval_tasks.append(task)
-    
-    # Fallback: if no eval tasks, use all tasks
-    if not eval_tasks:
-        eval_tasks = experiment.tasks
-        
-    return list(eval_tasks)
+def _select_eval_tasks(experiment) -> Tuple[List[Any], bool]:
+    eval_tasks = [t for t in experiment.tasks if _is_eval_task(t)]
+    if eval_tasks:
+        return list(eval_tasks), False
+    return list(experiment.tasks), True
 
 
 def evaluate_policy_on_tasks(
@@ -227,15 +262,18 @@ def evaluate_policy_on_tasks(
     include_raw_returns: bool = False,
     tasks_override: Optional[List[Any]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, float]]:
-    
+
     per_task = []
-    eval_tasks = list(tasks_override) if tasks_override is not None else _select_eval_tasks(experiment)
+    if tasks_override is not None:
+        eval_tasks = list(tasks_override)
+    else:
+        eval_tasks, _fallback_used = _select_eval_tasks(experiment)
     if not eval_tasks:
         return [], {"mean_eval_return": float("nan"), "iqm_eval_return": float("nan"), "objective": float("nan")}
-    
+
     for task in eval_tasks:
         returns = []
-        # Build a temporary eval TaskSpec to collect a fixed number of episodes in eval mode
+
         eval_spec = TaskSpec(
             task_id=task.task_id,
             action_space_id=task.action_space_id,
@@ -247,7 +285,6 @@ def evaluate_policy_on_tasks(
             with_continual_eval=False,
         )
 
-        # Run the eval loop; collect returns emitted by the runner
         for _, data in task._run(
             eval_spec,
             run_id=f"eval_{task.task_id}",
@@ -267,25 +304,22 @@ def evaluate_policy_on_tasks(
 
         mean_ret = float(np.mean(returns)) if returns else float("nan")
         iqm_ret = float(_iqm(returns))
-        
+
         per_task.append({
             "task_id": task.task_id,
             "mean": mean_ret,
             "iqm": iqm_ret,
             "raw_returns": returns if include_raw_returns else None,
         })
-        
-        print(f"  Eval Task {task.task_id}: Mean={mean_ret:.2f}, IQM={iqm_ret:.2f}")
 
-    # Aggregate across tasks
     mean_over_tasks = float(np.nanmean([t["mean"] for t in per_task])) if per_task else float("nan")
     iqm_over_tasks = float(np.nanmean([t["iqm"] for t in per_task])) if per_task else float("nan")
-    
+
     if objective_metric == "iqm":
         objective = iqm_over_tasks
     else:
         objective = mean_over_tasks
-    
+
     aggregates = {
         "mean_eval_return": mean_over_tasks,
         "iqm_eval_return": iqm_over_tasks,
@@ -303,28 +337,22 @@ def apply_budget_override(experiment, budget_override: Optional[int]):
     if budget_override is None:
         return
     for task in experiment.tasks:
-        # Override only TRAIN tasks (usually not _eval ones)
-        if not getattr(task, "eval_mode", False):
-            task._num_timesteps = budget_override
-            # Ensure task spec reflects override
-            if hasattr(task, "_task_spec"):
-                try:
-                    task._task_spec._num_timesteps = budget_override
-                except Exception:
-                    pass
+        if _is_eval_task(task):
+            continue
+        task._num_timesteps = budget_override
+        if hasattr(task, "_task_spec"):
+            try:
+                task._task_spec._num_timesteps = budget_override
+            except Exception:
+                pass
 
 
 def set_eval_mode(experiment, mode: str):
     if mode == "periodic":
         # Keep default continual eval
-        pass
-    elif mode == "final_only":
-        # Disable periodic eval by making freq huge
-        experiment._continual_testing_freq = 10**12
-    elif mode == "none":
-        experiment._continual_testing_freq = 10**12
-    # Ensure tasks themselves know we might be in a different mode if needed
-    # (Usually handled by experiment runner loop)
+        return
+    # final_only / none -> effectively disable periodic eval
+    experiment._continual_testing_freq = 10**12
 
 
 def build_experiment_and_policy(
@@ -336,7 +364,7 @@ def build_experiment_and_policy(
     output_dir: str,
     num_processes: int,
 ) -> Tuple[Any, Any]:
-    
+
     available_policies = get_available_policies()
     available_experiments = get_available_experiments()
 
@@ -345,36 +373,26 @@ def build_experiment_and_policy(
     if experiment_name not in available_experiments:
         raise ValueError(f"Experiment {experiment_name} not found.")
 
-    # Load experiment
     experiment = available_experiments[experiment_name]
     experiment.set_output_dir(output_dir)
 
-    # Load policy struct
     policy_struct = available_policies[policy_name]
-    
-    # Create Policy Config
-    # Start with default config from struct
     config = policy_struct.config()
-    
-    # Apply loaded PPO configs (e.g. from best_ppo.json)
+
     if ppo_config:
         config.load_from_dict(ppo_config.copy())
-    
-    # Apply Intervention configs
+
     override_dict = {
         "intervention_type": intervention_type,
         "intervention_params": intervention_params,
         "num_processes": num_processes,
     }
     config.load_from_dict(override_dict)
-    
     config.set_output_dir(output_dir)
 
-    # Initialize policy
     policy = policy_struct.policy(config, experiment.observation_space, experiment.action_spaces)
     policy.set_task_ids(experiment.task_ids)
 
-    # Save effective config used
     try:
         with open(os.path.join(output_dir, "policy_config_used.json"), "w", encoding="utf-8") as f:
             json.dump(config.__dict__, f, indent=2, default=str)
@@ -395,45 +413,68 @@ def write_results_jsonl(path: str, result: Dict[str, Any]):
 
 def write_leaderboard_csv(path: str, results: List[Dict[str, Any]]):
     ok_results = [r for r in results if r.get("status") == "ok" and not math.isnan(r.get("objective", float("nan")))]
-    # Determine sorting direction based on objective type
-    objective_type = None
-    if ok_results:
-        objective_type = ok_results[0].get("objective_type", "mean")
-    if objective_type == "forgetting":
-        ok_results.sort(key=lambda x: x.get("objective", float("inf")))  # minimize forgetting
-    else:
-        ok_results.sort(key=lambda x: x.get("objective", -1e9), reverse=True)
-    
     if not ok_results:
         return
 
-    fieldnames = [
-        "rank", "trial", "objective", "objective_type", "method",
-        "intervention_params", "output_dir",
-        "final_mean_eval_return", "final_iqm_eval_return",
-        "forgetting_mean", "forgetting_iqm", "composite"
-    ]
-    
+    objective_type = ok_results[0].get("objective_type", "mean")
+    if objective_type == "forgetting":
+        ok_results.sort(key=lambda x: x.get("objective", float("inf")))
+    else:
+        ok_results.sort(key=lambda x: x.get("objective", -1e9), reverse=True)
+
     import csv
+    fieldnames = [
+        "rank", "trial", "objective", "objective_stderr", "objective_type", "primary_metric", "final_eval_set",
+        "method", "intervention_params", "output_dir",
+        "final_mean", "final_mean_stderr", "final_iqm", "final_iqm_stderr", "final_primary", "final_primary_stderr",
+        "final_mean_train", "final_mean_train_stderr", "final_iqm_train", "final_iqm_train_stderr", "final_primary_train", "final_primary_train_stderr",
+        "final_mean_eval", "final_mean_eval_stderr", "final_iqm_eval", "final_iqm_eval_stderr", "final_primary_eval", "final_primary_eval_stderr",
+        "forgetting_mean", "forgetting_mean_stderr", "forgetting_iqm", "forgetting_iqm_stderr", "forgetting_primary_mean", "forgetting_primary_stderr",
+        "eval_fallback_used", "composite"
+    ]
+
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for rank, r in enumerate(ok_results, 1):
-            row = {
+            writer.writerow({
                 "rank": rank,
-                "trial": r["trial"],
+                "trial": r.get("trial"),
                 "objective": r.get("objective"),
+                "objective_stderr": r.get("objective_stderr"),
                 "objective_type": r.get("objective_type"),
+                "primary_metric": r.get("primary_metric"),
+                "final_eval_set": r.get("final_eval_set"),
                 "method": r.get("method"),
                 "intervention_params": json.dumps(r.get("params", {})),
                 "output_dir": r.get("output_dir"),
-                "final_mean_eval_return": r.get("final_mean"),
-                "final_iqm_eval_return": r.get("final_iqm"),
+                "final_mean": r.get("final_mean"),
+                "final_mean_stderr": r.get("final_mean_stderr"),
+                "final_iqm": r.get("final_iqm"),
+                "final_iqm_stderr": r.get("final_iqm_stderr"),
+                "final_primary": r.get("final_primary"),
+                "final_primary_stderr": r.get("final_primary_stderr"),
+                "final_mean_train": r.get("final_mean_train"),
+                "final_mean_train_stderr": r.get("final_mean_train_stderr"),
+                "final_iqm_train": r.get("final_iqm_train"),
+                "final_iqm_train_stderr": r.get("final_iqm_train_stderr"),
+                "final_primary_train": r.get("final_primary_train"),
+                "final_primary_train_stderr": r.get("final_primary_train_stderr"),
+                "final_mean_eval": r.get("final_mean_eval"),
+                "final_mean_eval_stderr": r.get("final_mean_eval_stderr"),
+                "final_iqm_eval": r.get("final_iqm_eval"),
+                "final_iqm_eval_stderr": r.get("final_iqm_eval_stderr"),
+                "final_primary_eval": r.get("final_primary_eval"),
+                "final_primary_eval_stderr": r.get("final_primary_eval_stderr"),
                 "forgetting_mean": r.get("forgetting_mean"),
+                "forgetting_mean_stderr": r.get("forgetting_mean_stderr"),
                 "forgetting_iqm": r.get("forgetting_iqm"),
+                "forgetting_iqm_stderr": r.get("forgetting_iqm_stderr"),
+                "forgetting_primary_mean": r.get("forgetting_primary"),
+                "forgetting_primary_stderr": r.get("forgetting_primary_stderr"),
+                "eval_fallback_used": r.get("eval_fallback_used"),
                 "composite": r.get("composite"),
-            }
-            writer.writerow(row)
+            })
 
 
 def write_best_json(path: str, results: List[Dict[str, Any]], k: Optional[int] = 1):
@@ -444,14 +485,358 @@ def write_best_json(path: str, results: List[Dict[str, Any]], k: Optional[int] =
             ok_results.sort(key=lambda x: x.get("objective", float("inf")))
         else:
             ok_results.sort(key=lambda x: x.get("objective", -1e9), reverse=True)
-    
+
     out_data = {
         "best": ok_results[0] if ok_results else None,
-        "top_k": ok_results[:k] if k is not None and ok_results else None
+        "top_k": ok_results[:k] if (k is not None and ok_results) else None
     }
-    
+
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(out_data, f, indent=2)
+        json.dump(out_data, f, indent=2, default=str)
+
+
+def _compute_forgetting_after_learned(
+    snapshots: List[Dict[str, Any]],
+    train_tasks: List[Any],
+    per_task_train_final: List[Dict[str, Any]],
+) -> Tuple[float, float]:
+    """
+    Forgetting (per task): (best snapshot AFTER learned) - (final).
+    We define "learned" for task i as the first snapshot labeled post_task for task_run_idx == i in cycle 0.
+    """
+    final_map_mean = {t["task_id"]: t["mean"] for t in per_task_train_final}
+    final_map_iqm = {t["task_id"]: t["iqm"] for t in per_task_train_final}
+
+    train_id_to_index = {t.task_id: i for i, t in enumerate(train_tasks)}
+
+    # Find learn point per task
+    learn_snap_idx: Dict[str, int] = {}
+    for si, snap in enumerate(snapshots):
+        if snap.get("label") != "post_task":
+            continue
+        if snap.get("cycle") != 0:
+            continue
+        tri = snap.get("task_run_idx")
+        for tid, idx in train_id_to_index.items():
+            if idx == tri and tid not in learn_snap_idx:
+                learn_snap_idx[tid] = si
+
+    per_task_forgetting_mean = []
+    per_task_forgetting_iqm = []
+
+    for tid in [t.task_id for t in train_tasks]:
+        if tid not in final_map_mean:
+            continue
+
+        start_si = learn_snap_idx.get(tid, None)
+        if start_si is None:
+            continue
+
+        best_mean = None
+        best_iqm = None
+
+        for snap in snapshots[start_si:]:
+            for pt in snap.get("per_task", []):
+                if pt.get("task_id") != tid:
+                    continue
+                cand_mean = pt.get("mean")
+                cand_iqm = pt.get("iqm")
+
+                if cand_mean is not None and not math.isnan(cand_mean):
+                    best_mean = cand_mean if (best_mean is None or cand_mean > best_mean) else best_mean
+
+                if cand_iqm is not None and not math.isnan(cand_iqm):
+                    best_iqm = cand_iqm if (best_iqm is None or cand_iqm > best_iqm) else best_iqm
+
+        if best_mean is not None and not math.isnan(final_map_mean.get(tid, float("nan"))):
+            per_task_forgetting_mean.append(best_mean - final_map_mean[tid])
+
+        if best_iqm is not None and not math.isnan(final_map_iqm.get(tid, float("nan"))):
+            per_task_forgetting_iqm.append(best_iqm - final_map_iqm[tid])
+
+    forgetting_mean = float(np.mean(per_task_forgetting_mean)) if per_task_forgetting_mean else float("nan")
+    forgetting_iqm = float(np.mean(per_task_forgetting_iqm)) if per_task_forgetting_iqm else float("nan")
+    return forgetting_mean, forgetting_iqm
+
+
+def _run_single_seed(
+    args,
+    params: Dict[str, Any],
+    trial_dir: str,
+    seed: int,
+    ppo_config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Run one candidate intervention with one RNG seed, returning per-seed metrics + saved artifacts under seed_dir.
+    """
+    # Avoid collisions
+    TaskBase.ALL_TASK_IDS.clear()
+
+    seed_dir = os.path.join(trial_dir, f"seed_{seed}")
+    os.makedirs(seed_dir, exist_ok=True)
+
+    tb_dir = os.path.join(seed_dir, "tb")
+    os.makedirs(tb_dir, exist_ok=True)
+
+    # Save PPO config for traceability at seed level
+    try:
+        with open(os.path.join(seed_dir, "ppo_frozen_used.json"), "w", encoding="utf-8") as f:
+            json.dump(ppo_config, f, indent=2)
+    except Exception:
+        pass
+
+    # PPO geometry validation
+    if ppo_config:
+        num_steps = ppo_config.get("num_steps")
+        num_mini_batch = ppo_config.get("num_mini_batch")
+        if num_steps is not None and num_mini_batch is not None:
+            try:
+                num_steps = int(num_steps)
+                num_mini_batch = int(num_mini_batch)
+            except Exception:
+                raise ValueError(f"PPO config has non-int num_steps/num_mini_batch: {num_steps}, {num_mini_batch}")
+
+            if not _validate_minibatch_geometry(num_steps, args.num_processes, num_mini_batch):
+                batch_size = num_steps * args.num_processes
+                minibatch_size = batch_size // num_mini_batch if num_mini_batch else 0
+                raise ValueError(
+                    "Invalid PPO minibatch geometry: "
+                    f"num_steps={num_steps}, num_processes={args.num_processes}, num_mini_batch={num_mini_batch}. "
+                    f"Require divisible batches and minibatch_size >= {MIN_MINIBATCH_SIZE} (got {minibatch_size})."
+                )
+
+    experiment, policy = build_experiment_and_policy(
+        policy_name="ppo",
+        experiment_name=args.experiment,
+        intervention_type=args.method,
+        intervention_params=params,
+        ppo_config=ppo_config,
+        output_dir=seed_dir,
+        num_processes=args.num_processes,
+    )
+
+    apply_budget_override(experiment, args.budget_override)
+    set_eval_mode(experiment, args.eval_mode)
+
+    writer = SummaryWriter(log_dir=tb_dir)
+
+    # Identify train/eval tasks
+    train_tasks = [t for t in experiment.tasks if _is_train_task(t)]
+    if not train_tasks:
+        train_tasks = list(experiment.tasks)
+        print(f"[Seed {seed}] No explicit train tasks found; using all tasks as train tasks for snapshots and forgetting.")
+
+    eval_tasks = [t for t in experiment.tasks if _is_eval_task(t)]
+    eval_fallback_used = False
+    if not eval_tasks:
+        eval_tasks = list(train_tasks)
+        eval_fallback_used = True
+        print(f"[Seed {seed}] No eval tasks found; using train tasks for final objective evaluation (fallback).")
+
+    # ----------------
+    # Training loop with snapshots (on train tasks, for forgetting)
+    # ----------------
+    snapshots: List[Dict[str, Any]] = []
+    total_train_timesteps = 0
+    cycle_count = getattr(experiment, "_cycle_count", 1) or 1
+
+    def run_snapshot(cycle_id: int, task_run_idx: int, label: str):
+        snap_per_task, snap_aggs = evaluate_policy_on_tasks(
+            experiment,
+            policy,
+            writer,
+            episodes_per_task=min(args.episodes_per_task, args.snapshot_episodes_per_task),
+            objective_metric=args.primary_metric,   # store both aggs but choose a consistent metric label
+            include_raw_returns=args.save_raw_returns,
+            tasks_override=train_tasks,
+        )
+        snapshots.append({
+            "cycle": cycle_id,
+            "task_run_idx": task_run_idx,
+            "label": label,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "aggregate_mean": snap_aggs.get("mean_eval_return"),
+            "aggregate_iqm": snap_aggs.get("iqm_eval_return"),
+            "per_task": snap_per_task,
+        })
+
+    # Initial snapshot (pre-train)
+    run_snapshot(cycle_id=0, task_run_idx=-1, label="pre_train")
+
+    for cycle_id in range(cycle_count):
+        for task_run_idx, task in enumerate(train_tasks):
+            run_id = f"train_c{cycle_id}_t{task_run_idx}"
+            for task_timesteps, _ in task._run(
+                task._task_spec,
+                run_id=run_id,
+                policy=policy,
+                summary_writer=writer,
+                output_dir=experiment.output_dir,
+                timestep_log_offset=total_train_timesteps,
+                wait_to_report=False,
+                log_with_task_timestep=True,
+                reward_tag="train_reward",
+                task_timestep_start=0,
+            ):
+                total_train_timesteps = max(total_train_timesteps, task_timesteps)
+
+            run_snapshot(cycle_id=cycle_id, task_run_idx=task_run_idx, label="post_task")
+
+    # Final train-task eval (for objective metrics on train set)
+    per_task_train_final_obj, aggregates_train_obj = evaluate_policy_on_tasks(
+        experiment,
+        policy,
+        writer,
+        episodes_per_task=args.episodes_per_task,
+        objective_metric=args.primary_metric,
+        include_raw_returns=args.save_raw_returns,
+        tasks_override=train_tasks,
+    )
+
+    # Final eval-task eval (held-out generalization) if enabled
+    per_task_eval_obj: List[Dict[str, Any]] = []
+    aggregates_eval_obj: Dict[str, float] = {"objective": float("nan"), "mean_eval_return": float("nan"), "iqm_eval_return": float("nan")}
+    if args.eval_mode != "none":
+        per_task_eval_obj, aggregates_eval_obj = evaluate_policy_on_tasks(
+            experiment,
+            policy,
+            writer,
+            args.episodes_per_task,
+            args.primary_metric,
+            include_raw_returns=args.save_raw_returns,
+            tasks_override=eval_tasks,
+        )
+
+    # Final train-task eval for forgetting (uses dedicated episodes)
+    per_task_train_final_forgetting, _ = evaluate_policy_on_tasks(
+        experiment,
+        policy,
+        writer,
+        episodes_per_task=args.forgetting_episodes_per_task,
+        objective_metric=args.primary_metric,
+        include_raw_returns=args.save_raw_returns,
+        tasks_override=train_tasks,
+    )
+
+    # Plasticity metrics (optional)
+    eff_ranks = None
+    if hasattr(experiment, "get_current_effective_ranks"):
+        try:
+            eff_ranks = experiment.get_current_effective_ranks()
+        except Exception:
+            eff_ranks = None
+
+    # Forgetting (defensible: only after task learned)
+    forgetting_mean, forgetting_iqm = _compute_forgetting_after_learned(
+        snapshots=snapshots,
+        train_tasks=train_tasks,
+        per_task_train_final=per_task_train_final_forgetting,
+    )
+
+    # Final metrics per set
+    final_mean_train = aggregates_train_obj.get("mean_eval_return", float("nan"))
+    final_iqm_train = aggregates_train_obj.get("iqm_eval_return", float("nan"))
+    final_primary_train = final_iqm_train if args.primary_metric == "iqm" else final_mean_train
+
+    final_mean_eval = aggregates_eval_obj.get("mean_eval_return", float("nan"))
+    final_iqm_eval = aggregates_eval_obj.get("iqm_eval_return", float("nan"))
+    final_primary_eval = final_iqm_eval if args.primary_metric == "iqm" else final_mean_eval
+
+    if args.final_eval_set == "eval":
+        final_mean = final_mean_eval
+        final_iqm = final_iqm_eval
+        final_primary = final_primary_eval
+        objective_source = "eval_fallback_to_train" if eval_fallback_used else "eval"
+        if eval_fallback_used:
+            final_primary = final_primary_train
+            final_mean = final_mean_train
+            final_iqm = final_iqm_train
+    else:
+        final_mean = final_mean_train
+        final_iqm = final_iqm_train
+        final_primary = final_primary_train
+        objective_source = "train"
+
+    forgetting_primary = forgetting_iqm if args.primary_metric == "iqm" else forgetting_mean
+
+    # Objective
+    if args.objective in ("mean", "iqm"):
+        objective_value = final_primary
+    elif args.objective == "forgetting":
+        objective_value = forgetting_primary
+    elif args.objective == "composite":
+        objective_value = (final_primary if not math.isnan(final_primary) else 0.0) - args.lambda_forgetting * (
+            forgetting_primary if not math.isnan(forgetting_primary) else 0.0
+        )
+    else:
+        objective_value = float("nan")
+
+    # Save snapshots
+    snapshots_path = os.path.join(seed_dir, "snapshots.json")
+    with open(snapshots_path, "w", encoding="utf-8") as f:
+        json.dump(snapshots, f, indent=2)
+
+    writer.close()
+
+    seed_summary = {
+        "seed": seed,
+        "params": params,
+        "objective_type": args.objective,
+        "primary_metric": args.primary_metric,
+        "final_eval_set": args.final_eval_set,
+        "objective_source": objective_source,
+        "objective": objective_value,
+        "final_mean": final_mean,
+        "final_iqm": final_iqm,
+        "final_primary": final_primary,
+        "final_mean_train": final_mean_train,
+        "final_iqm_train": final_iqm_train,
+        "final_primary_train": final_primary_train,
+        "final_mean_eval": final_mean_eval,
+        "final_iqm_eval": final_iqm_eval,
+        "final_primary_eval": final_primary_eval,
+        "forgetting_mean": forgetting_mean,
+        "forgetting_iqm": forgetting_iqm,
+        "forgetting_primary": forgetting_primary,
+        "eval_mode": args.eval_mode,
+        "train_task_ids": [getattr(t, "task_id", "") for t in train_tasks],
+        "eval_task_ids": [getattr(t, "task_id", "") for t in eval_tasks],
+        "eval_fallback_used": eval_fallback_used,
+        "snapshots_path": snapshots_path,
+        "tb_dir": tb_dir,
+    }
+
+    try:
+        with open(os.path.join(seed_dir, "seed_summary.json"), "w", encoding="utf-8") as f:
+            json.dump(seed_summary, f, indent=2)
+    except Exception:
+        pass
+
+    return {
+        "seed": seed,
+        "seed_dir": seed_dir,
+        "objective": objective_value,
+        "final_mean": final_mean,
+        "final_iqm": final_iqm,
+        "final_primary": final_primary,
+        "final_mean_train": final_mean_train,
+        "final_iqm_train": final_iqm_train,
+        "final_primary_train": final_primary_train,
+        "final_mean_eval": final_mean_eval,
+        "final_iqm_eval": final_iqm_eval,
+        "final_primary_eval": final_primary_eval,
+        "forgetting_mean": forgetting_mean,
+        "forgetting_iqm": forgetting_iqm,
+        "forgetting_primary": forgetting_primary,
+        "per_task_eval": per_task_eval,
+        "per_task_train_final": per_task_train_final_forgetting,
+        "plasticity_metrics": {"effective_rank": eff_ranks} if eff_ranks is not None else None,
+        "snapshots_path": snapshots_path,
+        "train_task_ids": seed_summary["train_task_ids"],
+        "eval_task_ids": seed_summary["eval_task_ids"],
+        "eval_fallback_used": eval_fallback_used,
+        "objective_source": objective_source,
+    }
 
 
 def run_trial(
@@ -463,250 +848,251 @@ def run_trial(
     ppo_config: Dict[str, Any]
 ) -> Dict[str, Any]:
 
-    # Clean up task IDs from previous trials to avoid collision
+    # Avoid collisions across trials
     TaskBase.ALL_TASK_IDS.clear()
-    
+
     trial_dir = os.path.join(base_dir, f"trial_{trial_idx:03d}")
     os.makedirs(trial_dir, exist_ok=True)
-    tb_dir = os.path.join(trial_dir, "tb")
 
-    # Set seed
-    trial_seed = args.seed + trial_idx
-    np.random.seed(trial_seed)
-    random.seed(trial_seed)
-    torch.manual_seed(trial_seed)
+    # Save candidate params for traceability
+    try:
+        with open(os.path.join(trial_dir, "candidate_params.json"), "w", encoding="utf-8") as f:
+            json.dump({"trial": trial_idx, "params": params}, f, indent=2)
+    except Exception:
+        pass
 
     print(f"\n=== Running Trial {trial_idx} ===")
     print(f"Params: {params}")
 
+    trial_seeds = list(args.trial_seeds)
+    print(f"Seeds: {trial_seeds}")
+
     try:
-        # Validate PPO minibatch geometry when provided
-        if ppo_config:
-            num_steps = ppo_config.get("num_steps")
-            num_mini_batch = ppo_config.get("num_mini_batch")
-            if num_steps is not None and num_mini_batch is not None:
-                if not _validate_minibatch_geometry(num_steps, args.num_processes, num_mini_batch):
-                    batch_size = num_steps * args.num_processes
-                    minibatch_size = batch_size // num_mini_batch if num_mini_batch else 0
-                    raise ValueError(
-                        "Invalid PPO minibatch geometry: "
-                        f"num_steps={num_steps}, num_processes={args.num_processes}, num_mini_batch={num_mini_batch}. "
-                        f"Require divisible batches and minibatch_size >= {MIN_MINIBATCH_SIZE} (got {minibatch_size})."
-                    )
-        experiment, policy = build_experiment_and_policy(
-            policy_name="ppo",
-            experiment_name=args.experiment,
-            intervention_type=args.method,
-            intervention_params=params,
-            ppo_config=ppo_config,
-            output_dir=trial_dir,
-            num_processes=args.num_processes,
-        )
-        
-        apply_budget_override(experiment, args.budget_override)
-        set_eval_mode(experiment, args.eval_mode)
+        seed_results: List[Dict[str, Any]] = []
+        for s in trial_seeds:
+            print(f"  [Seed {s}] starting...")
+            sr = _run_single_seed(args=args, params=params, trial_dir=trial_dir, seed=s, ppo_config=ppo_config)
+            seed_results.append(sr)
+            print(f"  [Seed {s}] done. objective={sr['objective']:.6f}")
 
-        writer = SummaryWriter(log_dir=tb_dir)
+        # Aggregate across seeds
+        obj_vals = [sr["objective"] for sr in seed_results]
+        final_primary_vals = [sr["final_primary"] for sr in seed_results]
+        forgetting_primary_vals = [sr["forgetting_primary"] for sr in seed_results]
+        final_mean_vals = [sr["final_mean"] for sr in seed_results]
+        final_iqm_vals = [sr["final_iqm"] for sr in seed_results]
+        final_mean_train_vals = [sr["final_mean_train"] for sr in seed_results]
+        final_iqm_train_vals = [sr["final_iqm_train"] for sr in seed_results]
+        final_primary_train_vals = [sr["final_primary_train"] for sr in seed_results]
+        final_mean_eval_vals = [sr["final_mean_eval"] for sr in seed_results]
+        final_iqm_eval_vals = [sr["final_iqm_eval"] for sr in seed_results]
+        final_primary_eval_vals = [sr["final_primary_eval"] for sr in seed_results]
+        fmean_vals = [sr["forgetting_mean"] for sr in seed_results]
+        fiqm_vals = [sr["forgetting_iqm"] for sr in seed_results]
 
-        # ----------------
-        # Training loop with snapshots
-        # ----------------
-        snapshots = []
-        total_train_timesteps = 0
-        # Identify train tasks (non-eval)
-        train_tasks = [t for t in experiment.tasks if not getattr(t, "eval_mode", False) and not t.task_id.endswith("_eval")]
-        if not train_tasks:
-            print("Warning: No train-task filter found; using all tasks as train tasks.")
-            train_tasks = experiment.tasks
-        eval_tasks = _select_eval_tasks(experiment)
-        if not eval_tasks:
-            print("Warning: No explicit eval tasks found; using all tasks for evaluation snapshots.")
-            eval_tasks = experiment.tasks
+        objective_mean = _mean(obj_vals)
+        objective_stderr = _stderr(obj_vals)
 
-        cycle_count = getattr(experiment, "_cycle_count", 1) or 1
+        final_mean = _mean(final_mean_vals)
+        final_mean_stderr = _stderr(final_mean_vals)
 
-        def run_snapshot(cycle_id, task_run_idx, label):
-            snap_per_task, snap_aggs = evaluate_policy_on_tasks(
-                experiment,
-                policy,
-                writer,
-                episodes_per_task=min(args.episodes_per_task, args.snapshot_episodes_per_task),
-                objective_metric="mean",
-                include_raw_returns=args.save_raw_returns,
-                tasks_override=train_tasks,
-            )
-            snapshot = {
-                "cycle": cycle_id,
-                "task_run_idx": task_run_idx,
-                "label": label,
-                "timestamp": datetime.datetime.now().isoformat(),
-                "aggregate_mean": snap_aggs.get("mean_eval_return"),
-                "aggregate_iqm": snap_aggs.get("iqm_eval_return"),
-                "per_task": snap_per_task,
-            }
-            snapshots.append(snapshot)
+        final_iqm = _mean(final_iqm_vals)
+        final_iqm_stderr = _stderr(final_iqm_vals)
 
-        # Initial snapshot before training
-        run_snapshot(cycle_id=0, task_run_idx=-1, label="pre_train")
+        final_primary = _mean(final_primary_vals)
+        final_primary_stderr = _stderr(final_primary_vals)
 
-        for cycle_id in range(cycle_count):
-            for task_run_idx, task in enumerate(train_tasks):
-                run_id = f"train_c{cycle_id}_t{task_run_idx}"
-                for task_timesteps, _ in task._run(
-                    task._task_spec,
-                    run_id=run_id,
-                    policy=policy,
-                    summary_writer=writer,
-                    output_dir=experiment.output_dir,
-                    timestep_log_offset=total_train_timesteps,
-                    wait_to_report=False,
-                    log_with_task_timestep=True,
-                    reward_tag="train_reward",
-                    task_timestep_start=0,
-                ):
-                    total_train_timesteps = max(total_train_timesteps, task_timesteps)
-                # Snapshot after each train task
-                run_snapshot(cycle_id=cycle_id, task_run_idx=task_run_idx, label="post_task")
+        final_mean_train = _mean(final_mean_train_vals)
+        final_mean_train_stderr = _stderr(final_mean_train_vals)
 
-        # Final eval snapshot (full episodes_per_task) if enabled
-        per_task, aggregates = [], {"objective": float("nan")}
-        per_task_train_final: List[Dict[str, Any]] = []
-        # Final train-task eval for forgetting metric
-        per_task_train_final, _ = evaluate_policy_on_tasks(
-            experiment,
-            policy,
-            writer,
-            episodes_per_task=min(args.episodes_per_task, args.snapshot_episodes_per_task),
-            objective_metric="mean",
-            include_raw_returns=args.save_raw_returns,
-            tasks_override=train_tasks,
-        )
-        if args.eval_mode != "none":
-            print("Evaluating...")
-            eval_objective_metric = args.objective if args.objective in ("mean", "iqm") else "mean"
-            per_task, aggregates = evaluate_policy_on_tasks(
-                experiment,
-                policy,
-                writer,
-                args.episodes_per_task,
-                eval_objective_metric,
-                include_raw_returns=args.save_raw_returns,
-            )
-            print(f"Trial {trial_idx} Objective ({args.objective}): {aggregates['objective']:.4f}")
+        final_iqm_train = _mean(final_iqm_train_vals)
+        final_iqm_train_stderr = _stderr(final_iqm_train_vals)
 
-        eff_ranks = None
-        if hasattr(experiment, "get_current_effective_ranks"):
-            eff_ranks = experiment.get_current_effective_ranks()
+        final_primary_train = _mean(final_primary_train_vals)
+        final_primary_train_stderr = _stderr(final_primary_train_vals)
 
-        # Compute forgetting
-        forgetting_mean = float("nan")
-        forgetting_iqm = float("nan")
-        if per_task_train_final:
-            final_map_mean = {t["task_id"]: t["mean"] for t in per_task_train_final}
-            final_map_iqm = {t["task_id"]: t["iqm"] for t in per_task_train_final}
-            train_task_ids = [t.task_id for t in train_tasks]
-            per_task_forgetting_mean = []
-            per_task_forgetting_iqm = []
-            for tid in train_task_ids:
-                best_mean = None
-                best_iqm = None
-                for snap in snapshots:
-                    for pt in snap.get("per_task", []):
-                        if pt.get("task_id") == tid:
-                            cand_mean = pt.get("mean")
-                            cand_iqm = pt.get("iqm")
-                            if cand_mean is not None and not math.isnan(cand_mean):
-                                if best_mean is None or cand_mean > best_mean:
-                                    best_mean = cand_mean
-                            if cand_iqm is not None and not math.isnan(cand_iqm):
-                                if best_iqm is None or cand_iqm > best_iqm:
-                                    best_iqm = cand_iqm
-                if best_mean is not None and tid in final_map_mean and not math.isnan(final_map_mean[tid]):
-                    per_task_forgetting_mean.append(best_mean - final_map_mean[tid])
-                if best_iqm is not None and tid in final_map_iqm and not math.isnan(final_map_iqm[tid]):
-                    per_task_forgetting_iqm.append(best_iqm - final_map_iqm[tid])
-            if per_task_forgetting_mean:
-                forgetting_mean = float(np.mean(per_task_forgetting_mean))
-            if per_task_forgetting_iqm:
-                forgetting_iqm = float(np.mean(per_task_forgetting_iqm))
+        final_mean_eval = _mean(final_mean_eval_vals)
+        final_mean_eval_stderr = _stderr(final_mean_eval_vals)
 
-        final_mean = aggregates.get("mean_eval_return") if aggregates else float("nan")
-        final_iqm = aggregates.get("iqm_eval_return") if aggregates else float("nan")
+        final_iqm_eval = _mean(final_iqm_eval_vals)
+        final_iqm_eval_stderr = _stderr(final_iqm_eval_vals)
 
-        # Composite objective
-        objective_type = args.objective
-        objective_value = aggregates.get("objective")
-        if args.objective == "forgetting":
-            objective_value = forgetting_mean
-        elif args.objective == "composite":
-            # maximize final_mean - lambda * forgetting_mean
-            lambda_f = args.lambda_forgetting
-            objective_value = (final_mean if not math.isnan(final_mean) else 0.0) - lambda_f * (forgetting_mean if not math.isnan(forgetting_mean) else 0.0)
-        
-        # Save snapshots
-        snapshots_path = os.path.join(trial_dir, "snapshots.json")
-        with open(snapshots_path, "w", encoding="utf-8") as f:
-            json.dump(snapshots, f, indent=2)
+        final_primary_eval = _mean(final_primary_eval_vals)
+        final_primary_eval_stderr = _stderr(final_primary_eval_vals)
 
-        # Trial summary
-        ppo_hash = hashlib.md5(json.dumps(ppo_config, sort_keys=True).encode("utf-8") if ppo_config else b"no_ppo").hexdigest()
+        forgetting_mean = _mean(fmean_vals)
+        forgetting_mean_stderr = _stderr(fmean_vals)
+
+        forgetting_iqm = _mean(fiqm_vals)
+        forgetting_iqm_stderr = _stderr(fiqm_vals)
+
+        forgetting_primary = _mean(forgetting_primary_vals)
+        forgetting_primary_stderr = _stderr(forgetting_primary_vals)
+
+        # Composite is just "objective" when objective_type == composite; else None for readability
+        composite_value = objective_mean if args.objective == "composite" else None
+
+        # Hash PPO config (plus save it once at trial level)
+        ppo_hash = hashlib.md5(
+            json.dumps(ppo_config, sort_keys=True).encode("utf-8") if ppo_config else b"no_ppo"
+        ).hexdigest()
+        try:
+            with open(os.path.join(trial_dir, "ppo_frozen_used.json"), "w", encoding="utf-8") as f:
+                json.dump(ppo_config, f, indent=2)
+        except Exception:
+            pass
+
         trial_summary = {
             "trial": trial_idx,
             "timestamp": timestamp,
             "method": args.method,
             "params": params,
-            "seed": trial_seed,
             "status": "ok",
-            "objective_type": objective_type,
-            "objective": objective_value,
+            "objective_type": args.objective,
+            "primary_metric": args.primary_metric,
+            "objective": objective_mean,
+            "objective_stderr": objective_stderr,
             "final_mean": final_mean,
+            "final_mean_stderr": final_mean_stderr,
             "final_iqm": final_iqm,
+            "final_iqm_stderr": final_iqm_stderr,
+            "final_primary": final_primary,
+            "final_primary_stderr": final_primary_stderr,
+            "final_mean_train": final_mean_train,
+            "final_mean_train_stderr": final_mean_train_stderr,
+            "final_iqm_train": final_iqm_train,
+            "final_iqm_train_stderr": final_iqm_train_stderr,
+            "final_primary_train": final_primary_train,
+            "final_primary_train_stderr": final_primary_train_stderr,
+            "final_mean_eval": final_mean_eval,
+            "final_mean_eval_stderr": final_mean_eval_stderr,
+            "final_iqm_eval": final_iqm_eval,
+            "final_iqm_eval_stderr": final_iqm_eval_stderr,
+            "final_primary_eval": final_primary_eval,
+            "final_primary_eval_stderr": final_primary_eval_stderr,
             "forgetting_mean": forgetting_mean,
+            "forgetting_mean_stderr": forgetting_mean_stderr,
             "forgetting_iqm": forgetting_iqm,
-            "composite": objective_value if args.objective == "composite" else None,
+            "forgetting_iqm_stderr": forgetting_iqm_stderr,
+            "forgetting_primary": forgetting_primary,
+            "forgetting_primary_stderr": forgetting_primary_stderr,
+            "composite": composite_value,
+            "trial_seeds": trial_seeds,
             "ppo_config_hash": ppo_hash,
-            "snapshots_path": snapshots_path,
             "output_dir": trial_dir,
+            "final_eval_set": args.final_eval_set,
+            "train_task_ids": seed_results[0].get("train_task_ids", []),
+            "eval_task_ids": seed_results[0].get("eval_task_ids", []),
+            "eval_fallback_used": any(sr.get("eval_fallback_used") for sr in seed_results),
+            "seed_results": [{
+                "seed": sr["seed"],
+                "seed_dir": sr["seed_dir"],
+                "objective": sr.get("objective"),
+                "final_mean": sr.get("final_mean"),
+                "final_iqm": sr.get("final_iqm"),
+                "final_primary": sr.get("final_primary"),
+                "final_mean_train": sr.get("final_mean_train"),
+                "final_iqm_train": sr.get("final_iqm_train"),
+                "final_primary_train": sr.get("final_primary_train"),
+                "final_mean_eval": sr.get("final_mean_eval"),
+                "final_iqm_eval": sr.get("final_iqm_eval"),
+                "final_primary_eval": sr.get("final_primary_eval"),
+                "forgetting_mean": sr.get("forgetting_mean"),
+                "forgetting_iqm": sr.get("forgetting_iqm"),
+                "forgetting_primary": sr.get("forgetting_primary"),
+                "objective_source": sr.get("objective_source"),
+            } for sr in seed_results],
         }
+
         with open(os.path.join(trial_dir, "trial_summary.json"), "w", encoding="utf-8") as f:
-            json.dump(trial_summary, f, indent=2)
+            json.dump(trial_summary, f, indent=2, default=str)
 
         # Save lean best_config.json
         best_cfg = {
             "method": args.method,
             "params": params,
-            "objective_type": objective_type,
-            "objective": objective_value,
+            "objective_type": args.objective,
+            "primary_metric": args.primary_metric,
+            "objective": objective_mean,
+            "objective_stderr": objective_stderr,
             "final_mean": final_mean,
+            "final_mean_stderr": final_mean_stderr,
             "final_iqm": final_iqm,
+            "final_iqm_stderr": final_iqm_stderr,
+            "final_primary": final_primary,
+            "final_primary_stderr": final_primary_stderr,
+            "final_mean_train": final_mean_train,
+            "final_mean_train_stderr": final_mean_train_stderr,
+            "final_iqm_train": final_iqm_train,
+            "final_iqm_train_stderr": final_iqm_train_stderr,
+            "final_primary_train": final_primary_train,
+            "final_primary_train_stderr": final_primary_train_stderr,
+            "final_mean_eval": final_mean_eval,
+            "final_mean_eval_stderr": final_mean_eval_stderr,
+            "final_iqm_eval": final_iqm_eval,
+            "final_iqm_eval_stderr": final_iqm_eval_stderr,
+            "final_primary_eval": final_primary_eval,
+            "final_primary_eval_stderr": final_primary_eval_stderr,
             "forgetting_mean": forgetting_mean,
+            "forgetting_mean_stderr": forgetting_mean_stderr,
             "forgetting_iqm": forgetting_iqm,
+            "forgetting_iqm_stderr": forgetting_iqm_stderr,
+            "forgetting_primary": forgetting_primary,
+            "forgetting_primary_stderr": forgetting_primary_stderr,
+            "trial_seeds": trial_seeds,
+            "final_eval_set": args.final_eval_set,
+            "train_task_ids": seed_results[0].get("train_task_ids", []),
+            "eval_task_ids": seed_results[0].get("eval_task_ids", []),
+            "eval_fallback_used": any(sr.get("eval_fallback_used") for sr in seed_results),
         }
         with open(os.path.join(trial_dir, "best_config.json"), "w", encoding="utf-8") as f:
             json.dump(best_cfg, f, indent=2)
 
-        result = {
+        print(f"Trial {trial_idx} objective_mean={objective_mean:.6f} ± {objective_stderr:.6f}")
+
+        return {
             "trial": trial_idx,
             "timestamp": timestamp,
             "method": args.method,
             "params": params,
-            "seed": trial_seed,
-            "objective": objective_value,
-            "objective_type": objective_type,
-            "final_mean": final_mean,
-            "final_iqm": final_iqm,
-            "forgetting_mean": forgetting_mean,
-            "forgetting_iqm": forgetting_iqm,
-            "aggregates": aggregates,
-            "per_task": per_task,
-            "per_task_train_final": per_task_train_final,
-            "plasticity_metrics": {"effective_rank": eff_ranks} if eff_ranks else None,
-            "output_dir": trial_dir,
             "status": "ok",
+            "objective_type": args.objective,
+            "primary_metric": args.primary_metric,
+            "objective": objective_mean,
+            "objective_stderr": objective_stderr,
+            "final_mean": final_mean,
+            "final_mean_stderr": final_mean_stderr,
+            "final_iqm": final_iqm,
+            "final_iqm_stderr": final_iqm_stderr,
+            "final_primary": final_primary,
+            "final_primary_stderr": final_primary_stderr,
+            "final_mean_train": final_mean_train,
+            "final_mean_train_stderr": final_mean_train_stderr,
+            "final_iqm_train": final_iqm_train,
+            "final_iqm_train_stderr": final_iqm_train_stderr,
+            "final_primary_train": final_primary_train,
+            "final_primary_train_stderr": final_primary_train_stderr,
+            "final_mean_eval": final_mean_eval,
+            "final_mean_eval_stderr": final_mean_eval_stderr,
+            "final_iqm_eval": final_iqm_eval,
+            "final_iqm_eval_stderr": final_iqm_eval_stderr,
+            "final_primary_eval": final_primary_eval,
+            "final_primary_eval_stderr": final_primary_eval_stderr,
+            "forgetting_mean": forgetting_mean,
+            "forgetting_mean_stderr": forgetting_mean_stderr,
+            "forgetting_iqm": forgetting_iqm,
+            "forgetting_iqm_stderr": forgetting_iqm_stderr,
+            "forgetting_primary": forgetting_primary,
+            "forgetting_primary_stderr": forgetting_primary_stderr,
+            "composite": composite_value,
+            "trial_seeds": trial_seeds,
+            "seed_results": seed_results,
+            "final_eval_set": args.final_eval_set,
+            "train_task_ids": seed_results[0].get("train_task_ids", []),
+            "eval_task_ids": seed_results[0].get("eval_task_ids", []),
+            "eval_fallback_used": any(sr.get("eval_fallback_used") for sr in seed_results),
+            "output_dir": trial_dir,
         }
-        
-        writer.close()
-        return result
 
     except Exception as e:
         print(f"Trial {trial_idx} failed: {e}")
@@ -717,6 +1103,7 @@ def run_trial(
             "error": str(e),
             "method": args.method,
             "params": params,
+            "output_dir": trial_dir,
         }
 
 
@@ -727,27 +1114,45 @@ def parse_args():
                         choices=["dense", "gmp", "set", "reset", "partial_reinit", "redo"])
     parser.add_argument("--trials", default=10, type=int)
     parser.add_argument("--search", default="random", choices=["grid", "random"], type=str)
-    parser.add_argument("--seed", default=0, type=int)
-    
+
+    # Candidate generation seed (does NOT control training randomness anymore)
+    parser.add_argument("--seed", default=0, type=int, help="Seed for candidate generation (grid shuffle / random sampling).")
+
+    parser.add_argument("--trial_seeds", default="0,1,2", type=str,
+                        help="Comma-separated seeds to run each candidate with, e.g. '0,1,2'.")
+
     parser.add_argument("--budget_override", default=None, type=int)
     parser.add_argument("--eval_mode", default="final_only", choices=["final_only", "periodic", "none"])
-    parser.add_argument("--episodes_per_task", default=5, type=int)
+    parser.add_argument("--episodes_per_task", default=10, type=int)
+
+    parser.add_argument("--final_eval_set", default="train", choices=["train", "eval"],
+                        help="Which set to use for the final objective: train (default, aligns with forgetting) or eval (held-out generalization). Eval falls back to train if no eval tasks are defined.")
+
     parser.add_argument("--snapshot_episodes_per_task", default=2, type=int,
-                        help="Episodes per task for lightweight snapshots/forgetting")
+                        help="Episodes per task for lightweight snapshots used in forgetting (cheap).")
+
+    parser.add_argument("--forgetting_episodes_per_task", default=5, type=int,
+                        help="Episodes per task for FINAL train-task eval used in forgetting (less noisy).")
+
     parser.add_argument("--objective", default="mean", choices=["mean", "iqm", "forgetting", "composite"])
+    parser.add_argument("--primary_metric", default="iqm", choices=["mean", "iqm"],
+                        help="Metric family used consistently for objective/composite/forgetting (mean or iqm).")
+
     parser.add_argument("--lambda_forgetting", default=1.0, type=float,
-                        help="Weight for forgetting in composite objective")
+                        help="Weight for forgetting in composite objective (final - lambda * forgetting).")
+
     parser.add_argument("--save_raw_returns", action="store_true", default=False,
                         help="If set, store raw episode returns in outputs")
-    
-    parser.add_argument("--ppo_config", default=None, type=str, 
+
+    parser.add_argument("--ppo_config", default=None, type=str,
                         help="Path to JSON file with fixed PPO hyperparameters (tuned)")
-    
+
     parser.add_argument("--num_processes", default=1, type=int)
     parser.add_argument("--output_root", default="runs/tuning", type=str)
-    parser.add_argument("--grid_shuffle", action="store_true", default=True)
-    
-    # Save top K best to a json
+
+    # NOTE: store_true should default False; user can opt-in to shuffle
+    parser.add_argument("--grid_shuffle", action="store_true", default=False)
+
     parser.add_argument("--save_best_k", default=5, type=int)
 
     return parser.parse_args()
@@ -755,44 +1160,70 @@ def parse_args():
 
 def main():
     args = parse_args()
-    
+
+    # Enforce primary metric consistency with objective
+    if args.objective in {"mean", "iqm"} and args.primary_metric != args.objective:
+        print(f"Overriding primary_metric to '{args.objective}' to match objective '{args.objective}'.")
+        args.primary_metric = args.objective
+
+    # Parse trial seeds once
+    parsed_trial_seeds = _parse_int_list(args.trial_seeds)
+    if not parsed_trial_seeds:
+        parsed_trial_seeds = [0]
+    args.trial_seeds = parsed_trial_seeds
+    trial_seeds_str = ",".join(str(s) for s in args.trial_seeds)
+
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_dir = os.path.join(args.output_root, args.experiment, args.method, timestamp)
     os.makedirs(base_dir, exist_ok=True)
-    
+
     print(f"Starting tuning for method: {args.method}")
     print(f"Experiment: {args.experiment}")
     print(f"Output Directory: {base_dir}")
-    
+    print(f"Trials: {args.trials} | Search: {args.search} | Candidate seed: {args.seed} | Grid shuffle: {args.grid_shuffle}")
+    print(f"Eval mode: {args.eval_mode} | Episodes/task: {args.episodes_per_task}")
+    print(f"Snapshot eps/task: {args.snapshot_episodes_per_task} | Forgetting final eps/task: {args.forgetting_episodes_per_task}")
+    print(f"Objective: {args.objective} | Primary metric: {args.primary_metric} | Final eval set: {args.final_eval_set} | Lambda_forgetting: {args.lambda_forgetting}")
+    print(f"Trial seeds: {trial_seeds_str}")
+
     # Load PPO Config
-    ppo_config = {}
+    ppo_config: Dict[str, Any] = {}
     if args.ppo_config:
         print(f"Loading fixed PPO params from: {args.ppo_config}")
-        with open(args.ppo_config, "r") as f:
+        with open(args.ppo_config, "r", encoding="utf-8") as f:
             ppo_config = json.load(f)
-            # Handle if it's wrapped in a list (some configs are lists of dicts)
             if isinstance(ppo_config, list):
                 ppo_config = ppo_config[0]
-            # Handle if it's wrapped in 'best' (best_ppo.json format)
             if "best" in ppo_config:
-                ppo_config = ppo_config["best"].get("ppo_params", ppo_config["best"])
+                # Handle both "best_ppo.json" wrappers and raw dicts
+                b = ppo_config["best"]
+                if isinstance(b, dict) and "ppo_params" in b:
+                    ppo_config = b["ppo_params"]
+                else:
+                    ppo_config = b
 
-    # Generate Candidates
+    # Generate candidates
     candidates = build_candidates(args.method, args.search, args.trials, args.seed, args.grid_shuffle)
-    
-    results = []
-    
-    # Run Trials
+
+    # Save candidates list for traceability
+    try:
+        with open(os.path.join(base_dir, "candidates.json"), "w", encoding="utf-8") as f:
+            json.dump({"method": args.method, "search": args.search, "seed": args.seed, "candidates": candidates}, f, indent=2)
+    except Exception:
+        pass
+
+    results: List[Dict[str, Any]] = []
+
     for i, params in enumerate(candidates):
         res = run_trial(i, args, params, base_dir, timestamp, ppo_config)
         results.append(res)
-        
-        # Live updates
+
         write_results_jsonl(os.path.join(base_dir, "results.jsonl"), res)
         write_leaderboard_csv(os.path.join(base_dir, "leaderboard.csv"), results)
         write_best_json(os.path.join(base_dir, "best_interventions.json"), results, args.save_best_k)
 
     print(f"Tuning complete. Best results saved to {os.path.join(base_dir, 'best_interventions.json')}")
+
 
 if __name__ == "__main__":
     main()

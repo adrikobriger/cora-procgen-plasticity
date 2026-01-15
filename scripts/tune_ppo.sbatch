@@ -7,8 +7,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --time=3-00:00:00
-#SBATCH --output=logs/%x_%j.out
-#SBATCH --error=logs/%x_%j.err
+#SBATCH --output=/scratch/s5579783/cora-procgen-plasticity/logs/%x_%j.out
+#SBATCH --error=/scratch/s5579783/cora-procgen-plasticity/logs/%x_%j.err
 
 set -euo pipefail
 
@@ -23,19 +23,16 @@ EVAL_MODE="${EVAL_MODE:-final_only}"
 EPISODES_PER_TASK="${EPISODES_PER_TASK:-10}"
 OBJECTIVE="${OBJECTIVE:-iqm}"
 NUM_PROCESSES="${NUM_PROCESSES:-1}"
-SEED="${SEED:-0}"                 # used for candidate generation fallback
-SEEDS="${SEEDS:-0,1,2}"            # seeds per trial (comma-separated)
+SEED="${SEED:-0}"
+SEEDS="${SEEDS:-0,1,2}"
 
-# Setup
-# NOTE: Slurm needs the 'logs/' directory to exist at submit time since --output/--error point there.
-# If you submit from $REPO, ensure this exists beforehand: mkdir -p "$REPO/logs"
 mkdir -p "$REPO/logs"
 cd "$REPO"
 source "$VENV/bin/activate"
 
 export PYTHONUNBUFFERED=1
-export OMP_NUM_THREADS=1
-export MKL_NUM_THREADS=1
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 
 echo "PPO Baseline Hyperparameter Tuning!"
 echo "HOSTNAME: $(hostname)"
@@ -55,33 +52,33 @@ echo "SEEDS (per trial): $SEEDS"
 echo "------------------------------------------------------------"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-not set}"
 
-# Check Python/CUDA setup
 python - <<'PY'
 import sys, torch
 print("python:", sys.executable)
 print("torch:", torch.__version__, "torch.cuda:", torch.version.cuda)
 print("cuda_available:", torch.cuda.is_available())
-if torch.cuda.is_available():
-    print("device_count:", torch.cuda.device_count())
-    print("device0:", torch.cuda.get_device_name(0))
+if not torch.cuda.is_available():
+    raise SystemExit("ERROR: CUDA is not available. Refusing to run on CPU.")
+print("device_count:", torch.cuda.device_count())
+print("device0:", torch.cuda.get_device_name(0))
 PY
 
 echo "Starting PPO tuning..."
 
-PYTHONWARNINGS=ignore python tools/tune_ppo.py \
-    --experiment "$EXPERIMENT" \
-    --policy ppo \
-    --trials "$TRIALS" \
-    --search "$SEARCH" \
-    --budget_override "$BUDGET_OVERRIDE" \
-    --eval_mode "$EVAL_MODE" \
-    --episodes_per_task "$EPISODES_PER_TASK" \
-    --objective "$OBJECTIVE" \
-    --num_processes "$NUM_PROCESSES" \
-    --seed "$SEED" \
-    --seeds "$SEEDS" \
-    --strict_verify \
-    --output_root "runs/tuning"
+srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" python tools/tune_ppo.py \
+  --experiment "$EXPERIMENT" \
+  --policy ppo \
+  --trials "$TRIALS" \
+  --search "$SEARCH" \
+  --budget_override "$BUDGET_OVERRIDE" \
+  --eval_mode "$EVAL_MODE" \
+  --episodes_per_task "$EPISODES_PER_TASK" \
+  --objective "$OBJECTIVE" \
+  --num_processes "$NUM_PROCESSES" \
+  --seed "$SEED" \
+  --seeds "$SEEDS" \
+  --strict_verify \
+  --output_root "runs/tuning"
 
 echo "PPO tuning complete!"
 echo "Check runs/tuning/$EXPERIMENT/ppo_tune/ for results"

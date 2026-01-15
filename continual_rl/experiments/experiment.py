@@ -1,5 +1,6 @@
 import os
 import json
+import numbers
 import numpy as np
 import torch
 from continual_rl.experiments.run_metadata import RunMetadata
@@ -44,6 +45,7 @@ class Experiment(object):
 
         # ADDED: tracking continual-eval returns for forgetting metrics
         self._eval_last_return = {}
+        self._eval_last_return_iqm = {}
         self._ref_return_end_of_task = {}
 
         # ADDED: tracking effective rank metrics
@@ -281,12 +283,31 @@ class Experiment(object):
         # ADDED: Compute effective rank at each continual eval point
         self._compute_effective_rank(policy, total_timesteps, summary_writer)
 
+        def _iqm_local(xs):
+            xs = np.asarray(xs, dtype=np.float64)
+            if xs.size == 0:
+                return np.nan
+            xs = np.sort(xs)
+            n = xs.size
+            lo = int(np.floor(0.25 * n))
+            hi = int(np.ceil(0.75 * n))
+            if hi <= lo:
+                lo = 0
+                hi = n
+            return float(xs[lo:hi].mean())
+
         # Run a small amount of eval on all non-eval, not-currently-running tasks
         for test_task_run_id, test_task in enumerate(self.tasks):
             # not checking test_task._task_spec.eval_mode anymore since some eval tasks
             # (for train/test pairs) should be continual eval
             if not test_task._task_spec.with_continual_eval:
                 continue
+
+            episodes_cap = None
+            if hasattr(test_task, "_continual_eval_task_spec"):
+                episodes_cap = getattr(test_task._continual_eval_task_spec, "return_after_episode_num", None)
+            if episodes_cap is None:
+                episodes_cap = float("inf")
 
             self._logger.info(f"Continual eval for task: {test_task_run_id}")
 
@@ -299,31 +320,47 @@ class Experiment(object):
                 timestep_log_offset=total_timesteps,
             )
             test_complete = False
-            last_reward = None
+            returns_all = []
 
             while not test_complete:
                 try:
                     info = next(test_task_runner)
 
-                    # info is usually: ([reward], list_of_metric_dicts)
-                    if isinstance(info, tuple) and len(info) == 2:
-                        rewards, _ = info
+                    # Task generator yields: (task_timesteps, data); where data is (returns, logs) or None
+                    if not (isinstance(info, tuple) and len(info) == 2):
+                        continue
+
+                    _, data = info
+                    if data is None:
+                        continue
+
+                    if isinstance(data, tuple) and len(data) == 2:
+                        rewards, _ = data
                         if rewards is None:
-                            pass
-                        elif isinstance(rewards, (list, tuple)):
-                            if len(rewards) > 0:
-                                last_reward = rewards[-1]
-                        else:
-                            # scalar case
-                            if isinstance(rewards, (int, float)):
-                                last_reward = rewards
+                            continue
+
+                        if isinstance(rewards, (list, tuple)):
+                            for r in rewards:
+                                if isinstance(r, numbers.Real):
+                                    returns_all.append(float(r))
+                                    if len(returns_all) >= episodes_cap:
+                                        test_complete = True
+                                        break
+                        elif isinstance(rewards, numbers.Real):
+                            returns_all.append(float(rewards))
+                        if len(returns_all) >= episodes_cap:
+                            test_complete = True
+                            break
 
                 except StopIteration:
                     test_complete = True
 
-            # store most recent eval return for this task
-            if last_reward is not None:
-                self._eval_last_return[test_task_run_id] = float(last_reward)
+            # store aggregate eval return (mean over collected episodes) for this task
+            if returns_all:
+                mean_ret = float(np.mean(returns_all))
+                iqm_ret = _iqm_local(returns_all)
+                self._eval_last_return[test_task_run_id] = mean_ret
+                self._eval_last_return_iqm[test_task_run_id] = iqm_ret
 
             self._logger.info(f"Completed continual eval for task: {test_task_run_id}")
         

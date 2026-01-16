@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=tune-interventions
+#SBATCH --job-name=tune-set
 #SBATCH --partition=digitallab
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -17,14 +17,16 @@ VENV="/scratch/s5579783/venvs/cora"
 
 EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_1_cycle_5m_tuning}"
 METHOD="${METHOD:-set}"
-TRIALS="${TRIALS:-50}"
+TRIALS="${TRIALS:-20}"
 SEARCH="${SEARCH:-random}"
 BUDGET_OVERRIDE="${BUDGET_OVERRIDE:-100000}"
 EVAL_MODE="${EVAL_MODE:-final_only}"
 EPISODES_PER_TASK="${EPISODES_PER_TASK:-10}"
-OBJECTIVE="${OBJECTIVE:-mean}"
-NUM_PROCESSES="${NUM_PROCESSES:-1}"
+OBJECTIVE="${OBJECTIVE:-iqm}"
+NUM_PROCESSES="${NUM_PROCESSES:-16}"
 SEED="${SEED:-0}"
+TRIAL_SEEDS="${TRIAL_SEEDS:-0,1,2}"
+FINAL_EVAL_SET="${FINAL_EVAL_SET:-train}"
 PPO_CONFIG="${PPO_CONFIG:-configs/procgen/tuned_ppo_hyperparams.json}"
 
 # Setup
@@ -80,6 +82,8 @@ PYTHONWARNINGS=ignore python tools/tune_interventions.py \
     --objective "$OBJECTIVE" \
     --num_processes "$NUM_PROCESSES" \
     --seed "$SEED" \
+    --trial_seeds "$TRIAL_SEEDS" \
+    --final_eval_set "$FINAL_EVAL_SET" \
     --output_root "runs/tuning"
 
 echo "Intervention tuning complete!"

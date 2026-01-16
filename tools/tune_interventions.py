@@ -26,6 +26,7 @@ import json
 import random
 import math
 import itertools
+import numbers
 import datetime
 import traceback
 import hashlib
@@ -90,34 +91,73 @@ def _is_train_task(task) -> bool:
 # Search Space Definitions
 # -------------------------
 
-def _search_spaces(method: str):
+def _search_spaces(method: str, opt_steps_total: Optional[int] = None):
+    """Return (grid_space, rand_space) for the given intervention.
+
+    Notes:
+      - For SET, update_interval and warmup_steps are measured in *optimizer steps* (minibatch updates),
+        not environment timesteps. If opt_steps_total is provided, we scale these ranges to be meaningful
+        for the current run budget + PPO update geometry.
+    """
     method = method.lower()
     if method == "set":
-        grid_space = {
-            "target_sparsity": [0.5, 0.7, 0.85, 0.95],
-            "update_interval": [500, 2000, 5000],
-            "prune_fraction": [0.05, 0.1, 0.2, 0.3],
-            "warmup_steps": [0, 10_000, 50_000],
-        }
-        rand_space = {
-            "target_sparsity": {"type": "uniform", "low": 0.5, "high": 0.95},
-            "update_interval": {"type": "loguniform", "low": 500, "high": 5000, "round_int": True},
-            "prune_fraction": {"type": "uniform", "low": 0.05, "high": 0.3},
-            "warmup_steps": {"type": "loguniform", "low": 1, "high": 50_000, "round_int": True},
-        }
+        if opt_steps_total is not None and int(opt_steps_total) > 0:
+            opt_steps_total = int(opt_steps_total)
+
+            # We want SET to actually execute multiple prune+regrow updates within the run.
+            # Target roughly 5-50 updates across training.
+            def _clamp_int(x: int, lo: int, hi: int) -> int:
+                return int(max(lo, min(hi, x)))
+
+            # Update interval candidates now represent "updates per run" (relative schedule)
+            update_interval_grid = [10, 20, 40, 80]
+
+            # Warmup candidates now represent fraction of total optimizer steps
+            warmup_grid = [0.0, 0.01, 0.03, 0.07, 0.10]
+
+            # Random sampling ranges (relative schedule)
+            min_update = 5
+            max_update = 120
+            max_warmup = 0.20
+
+            rand_space = {
+                "target_sparsity": {"type": "uniform", "low": 0.5, "high": 0.95},
+                "update_interval": {"type": "loguniform", "low": float(min_update), "high": float(max_update), "round_int": True},
+                "prune_fraction": {"type": "uniform", "low": 0.05, "high": 0.3},
+                "warmup_steps": {"type": "uniform", "low": 0.0, "high": float(max_warmup)},
+            }
+
+            grid_space = {
+                "target_sparsity": [0.5, 0.7, 0.85, 0.95],
+                "update_interval": update_interval_grid,
+                "prune_fraction": [0.05, 0.1, 0.2, 0.3],
+                "warmup_steps": warmup_grid,
+            }
+        else:
+            # Fallback (should rarely be used): conservative defaults.
+            grid_space = {
+                "target_sparsity": [0.5, 0.7, 0.85, 0.95],
+                "update_interval": [200, 500, 1000],
+                "prune_fraction": [0.05, 0.1, 0.2, 0.3],
+                "warmup_steps": [0, 200, 1000],
+            }
+            rand_space = {
+                "target_sparsity": {"type": "uniform", "low": 0.5, "high": 0.95},
+                "update_interval": {"type": "loguniform", "low": 50, "high": 2000, "round_int": True},
+                "prune_fraction": {"type": "uniform", "low": 0.05, "high": 0.3},
+                "warmup_steps": {"type": "uniform", "low": 0.0, "high": 2000.0, "round_int": True},
+            }
+
     elif method == "gmp":
         grid_space = {
             "final_sparsity": [0.5, 0.7, 0.85, 0.95],
             "tasks_per_cycle": [3, 6],
             "prune_cycle": [0],
-            "global_prune": [True],
-            "prune_schedule": ["boundary"],
         }
         rand_space = {
             "final_sparsity": {"type": "uniform", "low": 0.5, "high": 0.95},
             "tasks_per_cycle": {"type": "uniform", "low": 3, "high": 8, "round_int": True},
             "prune_cycle": {"type": "categorical", "values": [0, 1]},
-            "global_prune": {"type": "categorical", "values": [True]},
         }
     elif method == "redo":
         grid_space = {
@@ -196,9 +236,9 @@ def _grid(options: Dict[str, List[Any]], shuffle: bool, rng: random.Random) -> L
     return [{k: vals[i] for i, k in enumerate(keys)} for vals in combos]
 
 
-def build_candidates(method: str, search: str, trials: int, seed: int, grid_shuffle: bool) -> List[Dict[str, Any]]:
+def build_candidates(method: str, search: str, trials: int, seed: int, grid_shuffle: bool, opt_steps_total: Optional[int] = None) -> List[Dict[str, Any]]:
     rng = random.Random(seed)
-    grid_space, rand_space = _search_spaces(method)
+    grid_space, rand_space = _search_spaces(method, opt_steps_total=opt_steps_total)
 
     if search == "grid":
         combos = _grid(grid_space, grid_shuffle, rng)
@@ -229,6 +269,64 @@ def _validate_minibatch_geometry(num_steps: int, num_processes: int, num_mini_ba
     return minibatch_size >= MIN_MINIBATCH_SIZE
 
 
+def _estimate_total_optimizer_steps(args, ppo_config: Dict[str, Any]) -> Optional[int]:
+    """Estimate total optimizer steps for the TRAIN portion of a run.
+
+    This is used to scale SET hyperparameters that are defined in optimizer steps.
+
+    Assumptions (standard PPO):
+      - Each rollout collects (num_steps * num_processes) environment steps.
+      - PPO performs `epochs` passes over the rollout, split into `num_mini_batch` minibatches.
+      - One optimizer step per minibatch.
+
+    If we cannot estimate reliably, returns None.
+    """
+    try:
+        # Instantiate the experiment (cheap) to count train tasks and cycles.
+        exps = get_available_experiments()
+        if args.experiment not in exps:
+            return None
+        exp = exps[args.experiment]
+        train_tasks = [t for t in exp.tasks if _is_train_task(t)]
+        if not train_tasks:
+            train_tasks = list(exp.tasks)
+        cycle_count = int(getattr(exp, "_cycle_count", 1) or 1)
+
+        if args.budget_override is not None:
+            per_task_steps = int(args.budget_override)
+            total_env_steps = per_task_steps * len(train_tasks) * cycle_count
+        else:
+            total_env_steps = 0
+            for t in train_tasks:
+                total_env_steps += int(getattr(t, "_num_timesteps", 0) or 0)
+            total_env_steps *= cycle_count
+
+        # PPO geometry
+        num_steps = int(ppo_config.get("num_steps", ppo_config.get("n_steps", 256)) or 256)
+        num_mini_batch = int(ppo_config.get("num_mini_batch", ppo_config.get("num_minibatches", 4)) or 4)
+
+        # Try several common keys for epochs
+        epochs = (
+            ppo_config.get("ppo_epoch")
+            or ppo_config.get("ppo_epochs")
+            or ppo_config.get("update_epochs")
+            or ppo_config.get("num_epochs")
+            or ppo_config.get("epochs")
+            or 4
+        )
+        epochs = int(epochs)
+
+        denom = max(1, num_steps * int(args.num_processes))
+        rollouts = int(math.ceil(total_env_steps / float(denom))) if total_env_steps > 0 else 0
+        opt_steps_total = rollouts * epochs * num_mini_batch
+        if opt_steps_total <= 0:
+            return None
+        return int(opt_steps_total)
+    except Exception as e:
+        print(f"WARNING: could not estimate optimizer steps (SET scaling). Falling back to defaults. Error: {e}")
+        return None
+
+
 # -------------------------
 # Evaluation Helpers
 # -------------------------
@@ -251,6 +349,55 @@ def _select_eval_tasks(experiment) -> Tuple[List[Any], bool]:
     if eval_tasks:
         return list(eval_tasks), False
     return list(experiment.tasks), True
+
+
+def _append_episode_returns(dst: List[float], batch, max_n: int) -> None:
+    """Append up to max_n numeric episode returns into dst, skipping None/NaN/inf and non-scalars."""
+    if batch is None or max_n <= 0:
+        return
+
+    # Some implementations may emit a single scalar instead of a list.
+    if isinstance(batch, numbers.Real):
+        batch_iter = [batch]
+    else:
+        try:
+            batch_iter = list(batch)
+        except Exception:
+            return
+
+    for r in batch_iter:
+        if r is None:
+            continue
+
+        # Handle common scalar containers (torch/np) defensively.
+        try:
+            import torch
+            if isinstance(r, torch.Tensor):
+                if r.numel() != 1:
+                    continue
+                r = r.item()
+        except Exception:
+            pass
+
+        try:
+            import numpy as _np
+            if isinstance(r, _np.ndarray):
+                if r.shape != ():
+                    continue
+                r = float(r)
+        except Exception:
+            pass
+
+        if not isinstance(r, numbers.Real):
+            continue
+
+        rf = float(r)
+        if math.isnan(rf) or math.isinf(rf):
+            continue
+
+        dst.append(rf)
+        if len(dst) >= max_n:
+            return
 
 
 def evaluate_policy_on_tasks(
@@ -300,7 +447,9 @@ def evaluate_policy_on_tasks(
             if data is None:
                 continue
             returns_batch, _logs = data
-            returns.extend(returns_batch)
+            _append_episode_returns(returns, returns_batch, episodes_per_task)
+            if len(returns) >= episodes_per_task:
+                break
 
         mean_ret = float(np.mean(returns)) if returns else float("nan")
         iqm_ret = float(_iqm(returns))
@@ -605,11 +754,16 @@ def _run_single_seed(
                     f"Require divisible batches and minibatch_size >= {MIN_MINIBATCH_SIZE} (got {minibatch_size})."
                 )
 
+    # Ensure per-seed intervention RNG independence (important for SET-style random regrowth)
+    seeded_params = dict(params)
+    if args.method.lower() == 'set':
+        seeded_params.setdefault('seed', int(seed))
+
     experiment, policy = build_experiment_and_policy(
         policy_name="ppo",
         experiment_name=args.experiment,
         intervention_type=args.method,
-        intervention_params=params,
+        intervention_params=seeded_params,
         ppo_config=ppo_config,
         output_dir=seed_dir,
         num_processes=args.num_processes,
@@ -632,6 +786,32 @@ def _run_single_seed(
         eval_tasks = list(train_tasks)
         eval_fallback_used = True
         print(f"[Seed {seed}] No eval tasks found; using train tasks for final objective evaluation (fallback).")
+
+    def _task_timesteps(task: Any) -> int:
+        for attr in ("_num_timesteps", "num_timesteps"):
+            if hasattr(task, attr):
+                try:
+                    return int(getattr(task, attr))
+                except Exception:
+                    pass
+        if hasattr(task, "_task_spec"):
+            ts = getattr(task._task_spec, "_num_timesteps", None)
+            if ts is None:
+                ts = getattr(task._task_spec, "num_timesteps", None)
+            try:
+                return int(ts) if ts is not None else 0
+            except Exception:
+                return 0
+        return 0
+
+    # Provide total training budget to interventions (for relative schedules like SET)
+    cycle_count = getattr(experiment, "_cycle_count", 1) or 1
+    total_train_timesteps = sum(_task_timesteps(t) for t in train_tasks) * int(cycle_count)
+    try:
+        if hasattr(policy, "_intervention") and policy._intervention is not None:
+            policy._intervention.ctx.params["total_train_timesteps"] = int(total_train_timesteps)
+    except Exception:
+        pass
 
     # ----------------
     # Training loop with snapshots (on train tasks, for forgetting)
@@ -828,7 +1008,7 @@ def _run_single_seed(
         "forgetting_mean": forgetting_mean,
         "forgetting_iqm": forgetting_iqm,
         "forgetting_primary": forgetting_primary,
-        "per_task_eval": per_task_eval,
+        "per_task_eval": per_task_eval_obj,
         "per_task_train_final": per_task_train_final_forgetting,
         "plasticity_metrics": {"effective_rank": eff_ranks} if eff_ranks is not None else None,
         "snapshots_path": snapshots_path,
@@ -1203,7 +1383,15 @@ def main():
                     ppo_config = b
 
     # Generate candidates
-    candidates = build_candidates(args.method, args.search, args.trials, args.seed, args.grid_shuffle)
+    opt_steps_total = _estimate_total_optimizer_steps(args, ppo_config) if args.method.lower() == 'set' else None
+
+    if opt_steps_total is not None:
+        print(f"[SET scaling] Estimated total optimizer steps: {opt_steps_total}")
+        gs, rs = _search_spaces('set', opt_steps_total=opt_steps_total)
+        print(f"[SET scaling] Grid update_interval: {gs.get('update_interval')}")
+        print(f"[SET scaling] Grid warmup_steps: {gs.get('warmup_steps')}")
+
+    candidates = build_candidates(args.method, args.search, args.trials, args.seed, args.grid_shuffle, opt_steps_total=opt_steps_total)
 
     # Save candidates list for traceability
     try:

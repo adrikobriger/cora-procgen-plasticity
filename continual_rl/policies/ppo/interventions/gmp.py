@@ -239,32 +239,27 @@ class GMPIntervention(InterventionBase):
         if remaining <= 0:
             return
 
-        # prune a subset of ties to reach exact count
+        # prune a subset of ties to reach exact count (safe for any tensor dimensionality)
         for name, tie_mask in tie_candidates:
             if remaining <= 0:
                 break
             m = self._masks[name]
             idx = tie_mask.nonzero(as_tuple=False)
-            if idx.numel() == 0:
+            if idx.shape[0] == 0:
                 continue
             take = min(remaining, idx.shape[0])
-            m[idx[:take, 0], ...] = 0.0  # works for 2D? no; fix below
+            # Deterministic: prune the first `take` indices.
+            for i in range(take):
+                m[tuple(idx[i].tolist())] = 0.0
+            remaining -= take
 
-        # NOTE: the above indexing line is not safe for >2D tensors.
-        # We'll do safe per-index assignment instead:
-        # (re-apply the tie pruning properly)
+        # If we still haven't pruned enough (should be rare), warn rather than silently under-pruning.
         if remaining > 0:
-            for name, tie_mask in tie_candidates:
-                if remaining <= 0:
-                    break
-                m = self._masks[name]
-                idx = tie_mask.nonzero(as_tuple=False)
-                if idx.shape[0] == 0:
-                    continue
-                take = min(remaining, idx.shape[0])
-                for i in range(take):
-                    m[tuple(idx[i].tolist())] = 0.0
-                remaining -= take
+            self.logger.warning(
+                'gmp tie-prune underflow | remaining=%d after processing all tie candidates (target_to_prune=%d)',
+                remaining,
+                to_prune,
+            )
 
     # OPTIMIZER STEP HOOKS
     def before_optimizer_step(self) -> None:

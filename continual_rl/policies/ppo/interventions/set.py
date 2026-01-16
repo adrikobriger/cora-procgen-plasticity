@@ -31,14 +31,18 @@ class SETIntervention(InterventionBase):
         p = ctx.params or {}
 
         self.target_sparsity: float = float(p.get("target_sparsity", 0.80))
-        self.update_interval: int = int(p.get("update_interval", 200))
+        self.update_interval_raw: float = float(p.get("update_interval", 200))
         self.prune_fraction: float = float(p.get("prune_fraction", 0.10))
-        self.warmup_steps: int = int(p.get("warmup_steps", 0))
+        self.warmup_steps_raw: float = float(p.get("warmup_steps", 0))
         self.seed: int = int(p.get("seed", 0))
 
         # internal step counter (optimizer steps / minibatch updates)
         self._opt_step: int = 0
         self._initialized_sparse: bool = False
+        self._schedule_resolved: bool = False
+        self._total_optimizer_steps: Optional[int] = None
+        self.update_interval: int = int(self.update_interval_raw) if self.update_interval_raw > 0 else 0
+        self.warmup_steps: int = int(self.warmup_steps_raw) if self.warmup_steps_raw > 1 else 0
 
         self._prunable: List[_PrunableParam] = self._collect_prunable_params()
         self.log_interval: int = int(p.get("log_interval", 1000))
@@ -54,20 +58,78 @@ class SETIntervention(InterventionBase):
         self._g.manual_seed(self.seed)
 
         self.logger.info(
-            "set init | target_sparsity=%.2f update_interval=%d prune_fraction=%.2f warmup_steps=%d prunable=%d",
+            "set init | target_sparsity=%.2f update_interval_raw=%.6f prune_fraction=%.2f warmup_raw=%.6f prunable=%d",
             self.target_sparsity,
-            self.update_interval,
+            self.update_interval_raw,
             self.prune_fraction,
-            self.warmup_steps,
+            self.warmup_steps_raw,
             len(self._prunable),
         )
         self.logger.info("set prunable params: %s", [x.name for x in self._prunable])
 
         # initialize sparse mask immediately if no warmup
-        if self.warmup_steps == 0:
+        if self.warmup_steps_raw == 0:
             self._initialize_to_target_sparsity()
             self._initialized_sparse = True
             self._apply_masks_to_params_()
+
+    def _resolve_schedule_if_needed(self) -> None:
+        if self._schedule_resolved:
+            return
+
+        # Attempt to compute total optimizer steps from runtime budget info
+        total_train_timesteps = self.ctx.params.get("total_train_timesteps")
+        try:
+            if total_train_timesteps is not None:
+                total_train_timesteps = int(total_train_timesteps)
+        except Exception:
+            total_train_timesteps = None
+
+        if total_train_timesteps is not None and total_train_timesteps > 0:
+            num_steps = getattr(self.ctx.rollout_storage, "num_steps", None)
+            try:
+                num_steps = int(num_steps) if num_steps is not None else None
+            except Exception:
+                num_steps = None
+
+            num_processes = None
+            try:
+                if hasattr(self.ctx.rollout_storage, "rewards"):
+                    num_processes = int(self.ctx.rollout_storage.rewards.size(1))
+            except Exception:
+                num_processes = None
+
+            ppo_epoch = int(getattr(self.ctx.ppo_trainer, "ppo_epoch", 0) or 0)
+            num_mini_batch = int(getattr(self.ctx.ppo_trainer, "num_mini_batch", 0) or 0)
+
+            if num_steps and num_processes and ppo_epoch and num_mini_batch:
+                total_updates = total_train_timesteps // (num_steps * num_processes)
+                total_optimizer_steps = total_updates * ppo_epoch * num_mini_batch
+                self._total_optimizer_steps = int(total_optimizer_steps)
+
+        # Warmup: interpret as fraction of total optimizer steps if <= 1
+        if self.warmup_steps_raw > 0 and self.warmup_steps_raw <= 1.0 and self._total_optimizer_steps:
+            self.warmup_steps = max(0, int(round(self.warmup_steps_raw * self._total_optimizer_steps)))
+        elif self.warmup_steps_raw > 1:
+            self.warmup_steps = int(self.warmup_steps_raw)
+
+        # Update interval: interpret as updates-per-run if total is known
+        if self.update_interval_raw > 0:
+            if self._total_optimizer_steps:
+                updates_per_run = float(self.update_interval_raw)
+                if updates_per_run > 0:
+                    interval = int(self._total_optimizer_steps // updates_per_run)
+                    self.update_interval = max(1, interval)
+            else:
+                self.update_interval = int(self.update_interval_raw)
+
+        self._schedule_resolved = True
+        self.logger.info(
+            "set schedule | total_opt_steps=%s warmup_steps=%d update_interval=%d",
+            str(self._total_optimizer_steps),
+            self.warmup_steps,
+            self.update_interval,
+        )
 
     # PARAMETER SELECTION
     def _collect_prunable_params(self) -> List[_PrunableParam]:
@@ -302,6 +364,9 @@ class SETIntervention(InterventionBase):
 
     def on_optimizer_step(self) -> None:
         self._opt_step += 1
+
+        # Resolve schedule after budget is known (if available)
+        self._resolve_schedule_if_needed()
 
         # warmup: run dense, then initialize sparse once
         if (not self._initialized_sparse) and (self._opt_step >= self.warmup_steps):

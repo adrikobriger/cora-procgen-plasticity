@@ -21,12 +21,19 @@ class RolloutStorage(object):
         self.value_preds = torch.zeros(num_steps + 1, num_processes, 1)
         self.returns = torch.zeros(num_steps + 1, num_processes, 1)
         self.action_log_probs = torch.zeros(num_steps, num_processes, 1)
-        if action_space.__class__.__name__ == 'Discrete':
+        is_discrete = (action_space.__class__.__name__ == 'Discrete') or hasattr(action_space, 'n')
+        if is_discrete:
             action_shape = 1
         else:
-            action_shape = action_space.shape[0]
+            # Fall back to shape-based sizing (e.g., Box/MultiBinary/MultiDiscrete)
+            if hasattr(action_space, 'shape') and action_space.shape is not None and len(action_space.shape) > 0:
+                action_shape = action_space.shape[0]
+            elif hasattr(action_space, 'nvec'):
+                action_shape = len(action_space.nvec)
+            else:
+                raise ValueError(f"Unsupported action_space type for RolloutStorage: {action_space}")
         self.actions = torch.zeros(num_steps, num_processes, action_shape)
-        if action_space.__class__.__name__ == 'Discrete':
+        if is_discrete:
             self.actions = self.actions.long()
         self.masks = torch.ones(num_steps + 1, num_processes, 1)
 

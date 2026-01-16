@@ -16,7 +16,7 @@ REPO="/scratch/$USER/cora-procgen-plasticity"
 VENV="/scratch/$USER/venvs/cora"
 
 EXPERIMENT="procgen_3_tasks_1_cycle_10k_debug"
-NUM_PROCESSES=1
+NUM_PROCESSES=16
 NUM_STEPS=256
 
 echo "HOSTNAME: $(hostname)"

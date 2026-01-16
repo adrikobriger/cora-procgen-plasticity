@@ -38,7 +38,8 @@ class Policy(nn.Module):
         self.dist = self.get_distribution_for_action_space(action_space)[0].linear
 
     def get_distribution_for_action_space(self, action_space):
-        if action_space.__class__.__name__ == "Discrete":
+        is_discrete = (action_space.__class__.__name__ == "Discrete") or hasattr(action_space, "n")
+        if is_discrete:
             num_outputs = action_space.n
             dist = Categorical(self.base.output_size, num_outputs)
         elif action_space.__class__.__name__ == "Box":

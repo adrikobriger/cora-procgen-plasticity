@@ -16,7 +16,7 @@ REPO="/scratch/s5579783/cora-procgen-plasticity"
 VENV="/scratch/s5579783/venvs/cora"
 
 EXPERIMENT="procgen_3_tasks_1_cycle_10k_debug"
-NUM_PROCESSES=1
+NUM_PROCESSES=16
 NUM_STEPS=256
 
 SET_PARAMS='{"target_sparsity":0.8,"update_interval":50,"prune_fraction":0.1,"warmup_steps":0,"seed":0}'

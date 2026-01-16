@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
+
+import os
 
 import torch
 
@@ -20,7 +22,8 @@ class GMPIntervention(InterventionBase):
     Gradual Magnitude Pruning (GMP) adapted for continual RL:
 
     - Prune ONLY at task boundaries in cycle 0 ("train-then-sparsify")
-    - Ramp sparsity to final_sparsity across tasks_per_cycle boundaries (e.g., 6)
+        - Ramp sparsity to final_sparsity across tasks_per_cycle boundaries
+            (tasks_per_cycle = number of pruning boundary steps within prune_cycle)
     - Once pruned, weights stay pruned permanently (hard masks)
     - Exclude CNN trunk (base.main) and exclude critic head (base.critic_linear)
     - Prune weights only (dim >= 2); do not prune biases / 1D params
@@ -31,8 +34,12 @@ class GMPIntervention(InterventionBase):
 
         p = ctx.params or {}
         self.final_sparsity: float = float(p.get("final_sparsity", 0.80))
+        # NOTE: tasks_per_cycle = number of pruning boundary steps within prune_cycle
+        #       (must match the actual number of train tasks in that cycle to reach final_sparsity).
         self.tasks_per_cycle: int = int(p.get("tasks_per_cycle", 3))
         self.prune_cycle: int = int(p.get("prune_cycle", 0))  # prune only on this cycle
+        self._allow_tasks_per_cycle_mismatch: bool = self._read_allow_mismatch_flag(p)
+        self._validated_prune_cycle: bool = False
 
         # boundary pruning counter (counts only when we actually prune)
         self._boundary_prune_step: int = 0
@@ -55,6 +62,55 @@ class GMPIntervention(InterventionBase):
             self.prune_cycle,
             len(self._prunable),
         )
+
+    @staticmethod
+    def _read_allow_mismatch_flag(p: Dict[str, float]) -> bool:
+        env = os.getenv("GMP_ALLOW_TASKS_PER_CYCLE_MISMATCH", "").strip().lower()
+        if env in {"1", "true", "yes", "y", "on"}:
+            return True
+        return bool(p.get("gmp_allow_tasks_per_cycle_mismatch", False))
+
+    def _infer_train_tasks_per_cycle(self) -> Optional[int]:
+        # Main/tuning code can supply this in ctx.params for reliable validation.
+        for key in ("train_tasks_per_cycle", "tasks_per_cycle_actual"):
+            val = self.ctx.params.get(key, None)
+            if val is not None:
+                try:
+                    return int(val)
+                except Exception:
+                    return None
+        return None
+
+    def _validate_tasks_per_cycle(self, cycle_id: int) -> None:
+        if self._validated_prune_cycle or cycle_id != self.prune_cycle:
+            return
+
+        actual = self._infer_train_tasks_per_cycle()
+        if actual is None:
+            self.logger.warning(
+                "gmp WARNING | tasks_per_cycle validation skipped: actual train tasks per cycle unknown. "
+                "Set ctx.params['train_tasks_per_cycle'] or export GMP_ALLOW_TASKS_PER_CYCLE_MISMATCH=1 to silence."
+            )
+            self._validated_prune_cycle = True
+            return
+
+        if actual != self.tasks_per_cycle:
+            msg = (
+                "GMP tasks_per_cycle mismatch: configured tasks_per_cycle=%d but experiment has %d train tasks per cycle. "
+                "To reach final_sparsity within prune_cycle, set tasks_per_cycle=%d. "
+                "Override by setting env GMP_ALLOW_TASKS_PER_CYCLE_MISMATCH=1 or intervention param "
+                "gmp_allow_tasks_per_cycle_mismatch=true."
+            )
+            if self._allow_tasks_per_cycle_mismatch:
+                self.logger.warning(msg, self.tasks_per_cycle, actual, actual)
+                self._validated_prune_cycle = True
+                return
+            raise ValueError(msg % (self.tasks_per_cycle, actual, actual))
+
+        self._validated_prune_cycle = True
+
+    def on_task_start(self, cycle_id: int, task_run_id: int) -> None:
+        self._validate_tasks_per_cycle(cycle_id)
 
     # PARAMETER SELECTION
     def _collect_prunable_params(self) -> List[_PrunableParam]:

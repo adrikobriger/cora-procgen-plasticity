@@ -64,6 +64,7 @@ if __name__ == "__main__":
         total_train_timesteps = sum(_task_timesteps(t) for t in train_tasks) * int(cycle_count)
         if hasattr(policy, "_intervention") and policy._intervention is not None:
             policy._intervention.ctx.params["total_train_timesteps"] = int(total_train_timesteps)
+            policy._intervention.ctx.params["train_tasks_per_cycle"] = int(len(train_tasks))
     except Exception:
         pass
 

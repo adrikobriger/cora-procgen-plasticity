@@ -19,8 +19,9 @@ EXPERIMENT="procgen_3_tasks_1_cycle_5m"
 NUM_PROCESSES=16
 NUM_STEPS=256
 
-# IMPORTANT: tasks_per_cycle must match the number of TRAIN tasks per cycle (3 here).
-GMP_PARAMS='{"final_sparsity":0.8,"tasks_per_cycle":3,"prune_cycle":0}'
+# Tuned GMP intervention hyperparameters
+INTERVENTION_CONFIG="configs/procgen/tuned_gmp_hyperparams.json"
+GMP_PARAMS="$(cat "$INTERVENTION_CONFIG")"
 
 mkdir -p "$REPO/logs"
 cd "$REPO"
@@ -35,6 +36,7 @@ echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-}"
 echo "REPO: $REPO"
 echo "EXPERIMENT: $EXPERIMENT"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}"
+echo "INTERVENTION_CONFIG: $INTERVENTION_CONFIG"
 
 RUN_DIR="runs/${EXPERIMENT}/gmp/ppo_gmp_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$RUN_DIR"

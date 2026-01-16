@@ -19,7 +19,8 @@ EXPERIMENT="procgen_3_tasks_1_cycle_5m"
 NUM_PROCESSES=16
 NUM_STEPS=256
 
-SET_PARAMS='{"target_sparsity":0.8,"update_interval":50,"prune_fraction":0.1,"warmup_steps":0,"seed":0}'
+INTERVENTION_CONFIG="configs/procgen/tuned_set_hyperparams.json"
+SET_PARAMS="$(cat "$INTERVENTION_CONFIG")"
 
 mkdir -p "$REPO/logs"
 cd "$REPO"
@@ -34,6 +35,7 @@ echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-}"
 echo "REPO: $REPO"
 echo "EXPERIMENT: $EXPERIMENT"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}"
+echo "INTERVENTION_CONFIG: $INTERVENTION_CONFIG"
 
 RUN_DIR="runs/${EXPERIMENT}/set/ppo_set_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$RUN_DIR"

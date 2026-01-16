@@ -1,0 +1,6 @@
+{
+  "target_sparsity": 0.5490760306689967,
+  "update_interval": 29,
+  "prune_fraction": 0.22664035246672243,
+  "warmup_steps": 0.10948818226568476
+}

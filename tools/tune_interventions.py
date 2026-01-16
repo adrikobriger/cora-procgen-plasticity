@@ -1318,7 +1318,7 @@ def parse_args():
     parser.add_argument("--primary_metric", default="iqm", choices=["mean", "iqm"],
                         help="Metric family used consistently for objective/composite/forgetting (mean or iqm).")
 
-    parser.add_argument("--lambda_forgetting", default=1.0, type=float,
+    parser.add_argument("--lambda_forgetting", default=0.5, type=float,
                         help="Weight for forgetting in composite objective (final - lambda * forgetting).")
 
     parser.add_argument("--save_raw_returns", action="store_true", default=False,

@@ -19,13 +19,15 @@ EXPERIMENT="procgen_3_tasks_1_cycle_10k_debug"
 NUM_PROCESSES=16
 NUM_STEPS=256
 
-SET_PARAMS='{"target_sparsity":0.8,"update_interval":50,"prune_fraction":0.1,"warmup_steps":0,"seed":0}'
+INTERVENTION_CONFIG="configs/procgen/tuned_set_hyperparams.json"
+SET_PARAMS="$(cat "$INTERVENTION_CONFIG")"
 
 echo "HOSTNAME: $(hostname)"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-}"
 echo "REPO: $REPO"
 echo "EXPERIMENT: $EXPERIMENT"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}"
+echo "INTERVENTION_CONFIG: $INTERVENTION_CONFIG"
 
 cd "$REPO"
 mkdir -p logs
@@ -49,4 +51,3 @@ PYTHONWARNINGS=ignore python main.py \
   --cuda True \
   --intervention_type set \
   --intervention_params "$SET_PARAMS"
-z

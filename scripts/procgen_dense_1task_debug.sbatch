@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=procgen-dense-3t1c
+#SBATCH --job-name=procgen-dense-3tasks-10k-debug
 #SBATCH --partition=digitallab
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
-#SBATCH --time=2-00:00:00
+#SBATCH --time=00:30:00
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 
@@ -15,7 +15,7 @@ set -euo pipefail
 REPO="/scratch/s5579783/cora-procgen-plasticity"
 VENV="/scratch/s5579783/venvs/cora"
 
-EXPERIMENT="procgen_1_task_1_cycle_5m"
+EXPERIMENT="procgen_3_tasks_1_cycle_10k_debug"
 NUM_PROCESSES=16
 NUM_STEPS=256
 

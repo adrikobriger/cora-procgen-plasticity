@@ -19,13 +19,15 @@ EXPERIMENT="procgen_3_tasks_1_cycle_10k_debug"
 NUM_PROCESSES=16
 NUM_STEPS=256
 
-GMP_PARAMS='{"final_sparsity":0.8,"tasks_per_cycle":6,"prune_cycle":0}'
+INTERVENTION_CONFIG="configs/procgen/tuned_gmp_hyperparams.json"
+GMP_PARAMS="$(cat "$INTERVENTION_CONFIG")"
 
 echo "HOSTNAME: $(hostname)"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-}"
 echo "REPO: $REPO"
 echo "EXPERIMENT: $EXPERIMENT"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}"
+echo "INTERVENTION_CONFIG: $INTERVENTION_CONFIG"
 
 cd "$REPO"
 mkdir -p logs

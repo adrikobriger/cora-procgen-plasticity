@@ -3,9 +3,9 @@
 #SBATCH --partition=digitallab
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
-#SBATCH --mem=16G
+#SBATCH --mem=32G
 #SBATCH --time=0-02:00:00
 #SBATCH --output=/scratch/s5579783/cora-procgen-plasticity/logs/%x_%j.out
 #SBATCH --error=/scratch/s5579783/cora-procgen-plasticity/logs/%x_%j.err

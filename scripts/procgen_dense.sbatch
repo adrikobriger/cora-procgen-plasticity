@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=procgen-dense-3t1c
+#SBATCH --job-name=procgen-dense-3t2c
 #SBATCH --partition=digitallab
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -15,7 +15,7 @@ set -euo pipefail
 REPO="/scratch/s5579783/cora-procgen-plasticity"
 VENV="/scratch/s5579783/venvs/cora"
 
-EXPERIMENT="procgen_3_tasks_1_cycle_5m"
+EXPERIMENT="procgen_3_tasks_2_cycles_5m"
 NUM_PROCESSES=16
 NUM_STEPS=256
 

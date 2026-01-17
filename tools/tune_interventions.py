@@ -151,13 +151,13 @@ def _search_spaces(method: str, opt_steps_total: Optional[int] = None):
     elif method == "gmp":
         grid_space = {
             "final_sparsity": [0.5, 0.7, 0.85, 0.95],
-            "tasks_per_cycle": [3, 6],
-            "prune_cycle": [0],
+            "tstart_frac": [0.02, 0.05, 0.10],
+            "tend_frac": [0.70, 0.80, 0.90],
         }
         rand_space = {
             "final_sparsity": {"type": "uniform", "low": 0.5, "high": 0.95},
-            "tasks_per_cycle": {"type": "uniform", "low": 3, "high": 8, "round_int": True},
-            "prune_cycle": {"type": "categorical", "values": [0, 1]},
+            "tstart_frac": {"type": "uniform", "low": 0.01, "high": 0.15},
+            "tend_frac": {"type": "uniform", "low": 0.60, "high": 0.95},
         }
     elif method == "redo":
         grid_space = {
@@ -807,10 +807,31 @@ def _run_single_seed(
     # Provide total training budget to interventions (for relative schedules like SET)
     cycle_count = getattr(experiment, "_cycle_count", 1) or 1
     total_train_timesteps = sum(_task_timesteps(t) for t in train_tasks) * int(cycle_count)
+    total_train_steps = None
+    try:
+        num_steps = int(ppo_config.get("num_steps", ppo_config.get("n_steps", 256)) or 256)
+        num_mini_batch = int(ppo_config.get("num_mini_batch", ppo_config.get("num_minibatches", 4)) or 4)
+        ppo_epoch = int(
+            ppo_config.get("ppo_epoch")
+            or ppo_config.get("ppo_epochs")
+            or ppo_config.get("update_epochs")
+            or ppo_config.get("num_epochs")
+            or ppo_config.get("epochs")
+            or 4
+        )
+        denom = max(1, num_steps * int(args.num_processes))
+        rollouts = int(math.ceil(total_train_timesteps / float(denom))) if total_train_timesteps > 0 else 0
+        if rollouts > 0 and num_mini_batch > 0 and ppo_epoch > 0:
+            total_train_steps = rollouts * ppo_epoch * num_mini_batch
+    except Exception:
+        total_train_steps = None
     try:
         if hasattr(policy, "_intervention") and policy._intervention is not None:
             policy._intervention.ctx.params["total_train_timesteps"] = int(total_train_timesteps)
             policy._intervention.ctx.params["train_tasks_per_cycle"] = int(len(train_tasks))
+            policy._intervention.ctx.params["num_cycles"] = int(cycle_count)
+            if total_train_steps is not None:
+                policy._intervention.ctx.params["total_train_steps"] = int(total_train_steps)
     except Exception:
         pass
 

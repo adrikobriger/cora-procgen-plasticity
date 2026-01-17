@@ -1,4 +1,5 @@
 import sys
+import math
 from torch import multiprocessing
 from torch.utils.tensorboard.writer import SummaryWriter
 from continual_rl.utils.argparse_manager import ArgparseManager
@@ -62,9 +63,26 @@ if __name__ == "__main__":
             train_tasks = list(experiment.tasks)
         cycle_count = getattr(experiment, "_cycle_count", 1) or 1
         total_train_timesteps = sum(_task_timesteps(t) for t in train_tasks) * int(cycle_count)
+        total_train_steps = None
+        try:
+            cfg = getattr(policy, "_config", None)
+            if cfg is not None:
+                num_steps = int(getattr(cfg, "num_steps", 0) or 0)
+                num_processes = int(getattr(cfg, "num_processes", 0) or 0)
+                num_mini_batch = int(getattr(cfg, "num_mini_batch", 0) or 0)
+                ppo_epoch = int(getattr(cfg, "ppo_epoch", 0) or 0)
+                denom = max(1, num_steps * num_processes)
+                rollouts = int(math.ceil(total_train_timesteps / float(denom))) if total_train_timesteps > 0 else 0
+                if rollouts > 0 and num_mini_batch > 0 and ppo_epoch > 0:
+                    total_train_steps = rollouts * ppo_epoch * num_mini_batch
+        except Exception:
+            total_train_steps = None
         if hasattr(policy, "_intervention") and policy._intervention is not None:
             policy._intervention.ctx.params["total_train_timesteps"] = int(total_train_timesteps)
             policy._intervention.ctx.params["train_tasks_per_cycle"] = int(len(train_tasks))
+            policy._intervention.ctx.params["num_cycles"] = int(cycle_count)
+            if total_train_steps is not None:
+                policy._intervention.ctx.params["total_train_steps"] = int(total_train_steps)
     except Exception:
         pass
 

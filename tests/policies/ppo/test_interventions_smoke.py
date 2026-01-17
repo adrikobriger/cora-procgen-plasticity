@@ -137,37 +137,34 @@ def test_redo_intervention_smoke():
     assert redo._opt_step == 1
 
 
-def test_gmp_tasks_per_cycle_mismatch_raises():
+def test_gmp_requires_total_train_steps():
     ctx = _make_ctx({
         "final_sparsity": 0.8,
-        "tasks_per_cycle": 7,
-        "prune_cycle": 0,
-        "train_tasks_per_cycle": 3,
+    })
+    with pytest.raises(ValueError, match="total_train_steps"):
+        GMPIntervention(ctx)
+
+
+def test_gmp_pruning_activates_in_window():
+    ctx = _make_ctx({
+        "final_sparsity": 0.8,
+        "total_train_steps": 100,
+        "tstart_frac": 0.0,
+        "tend_frac": 1.0,
+        "pruning_freq_steps": 1,
     })
     gmp = GMPIntervention(ctx)
 
-    with pytest.raises(ValueError, match="tasks_per_cycle mismatch"):
-        gmp.on_task_start(cycle_id=0, task_run_id=0)
+    for _ in range(5):
+        gmp.on_optimizer_step()
+
+    assert gmp._pruning_activated
 
 
-def test_gmp_tasks_per_cycle_match_ok():
+def test_gmp_ignores_prune_cycle():
     ctx = _make_ctx({
         "final_sparsity": 0.8,
-        "tasks_per_cycle": 3,
-        "prune_cycle": 0,
-        "train_tasks_per_cycle": 3,
+        "total_train_steps": 100,
+        "prune_cycle": 1,
     })
-    gmp = GMPIntervention(ctx)
-    gmp.on_task_start(cycle_id=0, task_run_id=0)
-
-
-def test_gmp_tasks_per_cycle_override_env(monkeypatch):
-    monkeypatch.setenv("GMP_ALLOW_TASKS_PER_CYCLE_MISMATCH", "1")
-    ctx = _make_ctx({
-        "final_sparsity": 0.8,
-        "tasks_per_cycle": 7,
-        "prune_cycle": 0,
-        "train_tasks_per_cycle": 3,
-    })
-    gmp = GMPIntervention(ctx)
-    gmp.on_task_start(cycle_id=0, task_run_id=0)
+    GMPIntervention(ctx)

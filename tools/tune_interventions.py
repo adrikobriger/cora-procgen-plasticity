@@ -87,6 +87,24 @@ def _is_train_task(task) -> bool:
     return not _is_eval_task(task)
 
 
+def _task_timesteps(task: Any) -> int:
+    for attr in ("_num_timesteps", "num_timesteps"):
+        if hasattr(task, attr):
+            try:
+                return int(getattr(task, attr))
+            except Exception:
+                pass
+    if hasattr(task, "_task_spec"):
+        ts = getattr(task._task_spec, "_num_timesteps", None)
+        if ts is None:
+            ts = getattr(task._task_spec, "num_timesteps", None)
+        try:
+            return int(ts) if ts is not None else 0
+        except Exception:
+            return 0
+    return 0
+
+
 # -------------------------
 # Search Space Definitions
 # -------------------------
@@ -512,6 +530,7 @@ def build_experiment_and_policy(
     ppo_config: Dict[str, Any],
     output_dir: str,
     num_processes: int,
+    budget_override: Optional[int] = None,
 ) -> Tuple[Any, Any]:
 
     available_policies = get_available_policies()
@@ -531,12 +550,45 @@ def build_experiment_and_policy(
     if ppo_config:
         config.load_from_dict(ppo_config.copy())
 
+    # Apply budget override before computing total_train_steps (if any)
+    apply_budget_override(experiment, budget_override)
+
+    # Compute total_train_steps for global-step interventions (e.g., GMP)
+    total_train_steps = None
+    try:
+        train_tasks = [t for t in experiment.tasks if _is_train_task(t)]
+        if not train_tasks:
+            train_tasks = list(experiment.tasks)
+        cycle_count = int(getattr(experiment, "_cycle_count", 1) or 1)
+        total_train_timesteps = sum(_task_timesteps(t) for t in train_tasks) * cycle_count
+
+        if total_train_timesteps <= 0 and budget_override is not None:
+            total_train_timesteps = int(budget_override) * len(train_tasks) * cycle_count
+
+        num_steps = int(getattr(config, "num_steps", 256) or 256)
+        num_mini_batch = int(getattr(config, "num_mini_batch", 4) or 4)
+        ppo_epoch = int(getattr(config, "ppo_epoch", 4) or 4)
+        denom = max(1, num_steps * int(num_processes))
+        rollouts = int(math.ceil(total_train_timesteps / float(denom))) if total_train_timesteps > 0 else 0
+        if rollouts > 0 and num_mini_batch > 0 and ppo_epoch > 0:
+            total_train_steps = rollouts * ppo_epoch * num_mini_batch
+    except Exception:
+        total_train_steps = None
+
+    if total_train_steps is not None:
+        intervention_params = dict(intervention_params or {})
+        intervention_params["total_train_steps"] = int(total_train_steps)
+
     override_dict = {
         "intervention_type": intervention_type,
         "intervention_params": intervention_params,
         "num_processes": num_processes,
     }
     config.load_from_dict(override_dict)
+    if total_train_steps is not None:
+        if getattr(config, "intervention_params", None) is None:
+            config.intervention_params = {}
+        config.intervention_params["total_train_steps"] = int(total_train_steps)
     config.set_output_dir(output_dir)
 
     policy = policy_struct.policy(config, experiment.observation_space, experiment.action_spaces)
@@ -767,9 +819,9 @@ def _run_single_seed(
         ppo_config=ppo_config,
         output_dir=seed_dir,
         num_processes=args.num_processes,
+        budget_override=args.budget_override,
     )
 
-    apply_budget_override(experiment, args.budget_override)
     set_eval_mode(experiment, args.eval_mode)
 
     writer = SummaryWriter(log_dir=tb_dir)

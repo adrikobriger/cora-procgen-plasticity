@@ -3,6 +3,7 @@ import subprocess
 import copy
 import json
 import datetime
+import math
 
 
 class ExperimentNotFoundException(Exception):
@@ -51,6 +52,55 @@ class ConfigurationLoader(object):
         policy_class = self._available_policies[policy_id].policy
         policy_config_class = self._available_policies[policy_id].config
         policy_config = policy_config_class().load_from_dict(raw_config)
+
+        # Compute total_train_steps for global-step interventions (e.g., GMP)
+        def _is_eval_task(task) -> bool:
+            if getattr(task, "eval_mode", False):
+                return True
+            if hasattr(task, "_task_spec") and getattr(task._task_spec, "eval_mode", False):
+                return True
+            task_id = getattr(task, "task_id", "") or ""
+            return task_id.endswith("_eval")
+
+        def _task_timesteps(task) -> int:
+            for attr in ("_num_timesteps", "num_timesteps"):
+                if hasattr(task, attr):
+                    try:
+                        return int(getattr(task, attr))
+                    except Exception:
+                        pass
+            if hasattr(task, "_task_spec"):
+                ts = getattr(task._task_spec, "_num_timesteps", None)
+                if ts is None:
+                    ts = getattr(task._task_spec, "num_timesteps", None)
+                try:
+                    return int(ts) if ts is not None else 0
+                except Exception:
+                    return 0
+            return 0
+
+        total_train_steps = None
+        try:
+            train_tasks = [t for t in experiment.tasks if not _is_eval_task(t)]
+            if not train_tasks:
+                train_tasks = list(experiment.tasks)
+            cycle_count = int(getattr(experiment, "_cycle_count", 1) or 1)
+            total_train_timesteps = sum(_task_timesteps(t) for t in train_tasks) * cycle_count
+
+            num_steps = int(getattr(policy_config, "num_steps", 256) or 256)
+            num_mini_batch = int(getattr(policy_config, "num_mini_batch", 4) or 4)
+            ppo_epoch = int(getattr(policy_config, "ppo_epoch", 4) or 4)
+            denom = max(1, num_steps * int(getattr(policy_config, "num_processes", 1) or 1))
+            rollouts = int(math.ceil(total_train_timesteps / float(denom))) if total_train_timesteps > 0 else 0
+            if rollouts > 0 and num_mini_batch > 0 and ppo_epoch > 0:
+                total_train_steps = rollouts * ppo_epoch * num_mini_batch
+        except Exception:
+            total_train_steps = None
+
+        if total_train_steps is not None:
+            if getattr(policy_config, "intervention_params", None) is None:
+                policy_config.intervention_params = {}
+            policy_config.intervention_params["total_train_steps"] = int(total_train_steps)
 
         # Set the experiment_output dir such that is accessible both from the experiment and from the policy
         # (via its config)

@@ -329,6 +329,63 @@ def get_available_experiments():
             cycle_count=1,
         ),
 
+        "procgen_3_tasks_1_cycle_100k": create_procgen_sequence_loader(
+            "procgen_3_tasks_1_cycle_100k",
+            ["climber-v0",
+             "dodgeball-v0",
+             "fruitbot-v0"],
+            num_timesteps=1e5,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=True,
+            eval_task_override_params=dict(
+                num_levels=0,
+            ),
+            continual_testing_freq=0.25e6,
+            cycle_count=1,
+        ),
+
+        "procgen_3_tasks_1_cycle_500k": create_procgen_sequence_loader(
+            "procgen_3_tasks_1_cycle_500k",
+            ["climber-v0",
+             "dodgeball-v0",
+             "fruitbot-v0"],
+            num_timesteps=5e5,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=True,
+            eval_task_override_params=dict(
+                num_levels=0,
+            ),
+            continual_testing_freq=0.25e6,
+            cycle_count=1,
+        ),
+
+        "procgen_3_tasks_1_cycle_1M": create_procgen_sequence_loader(
+            "procgen_3_tasks_1_cycle_1M",
+            ["climber-v0",
+             "dodgeball-v0",
+             "fruitbot-v0"],
+            num_timesteps=1e6,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=True,
+            eval_task_override_params=dict(
+                num_levels=0,
+            ),
+            continual_testing_freq=0.25e6,
+            cycle_count=1,
+        ),
+
         # Variant of the 3-task set with eval enabled; recommended small tuning target
         "procgen_3_tasks_1_cycle_5m_tuning": create_procgen_sequence_loader(
             "procgen_3_tasks_1_cycle_5m_tuning",

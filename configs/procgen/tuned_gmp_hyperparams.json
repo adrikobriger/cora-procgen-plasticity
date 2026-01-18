@@ -1,6 +1,6 @@
 {
-  "final_sparsity": 0.8799898331862717,
-  "tstart_frac": 0.05,
-  "tend_frac": 0.80,
+  "final_sparsity": 0.8645977561984652,
+  "tstart_frac": 0.13630323306154157,
+  "tend_frac": 0.7085516492617664,
   "pruning_freq_steps": 500
 }

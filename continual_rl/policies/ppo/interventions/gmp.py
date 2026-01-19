@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
-import math
+import os
 
 import torch
 
@@ -21,8 +21,9 @@ class GMPIntervention(InterventionBase):
     """
     Gradual Magnitude Pruning (GMP) adapted for continual RL:
 
-    - Prune using a global step schedule (Zhu & Gupta cubic) across the full run
-    - Pruning is NOT gated by cycles; it is timestep-based and consistent across 1-cycle/2-cycle runs
+    - Prune ONLY at task boundaries in cycle 0 ("train-then-sparsify")
+        - Ramp sparsity to final_sparsity across tasks_per_cycle boundaries
+            (tasks_per_cycle = number of pruning boundary steps within prune_cycle)
     - Once pruned, weights stay pruned permanently (hard masks)
     - Exclude CNN trunk (base.main) and exclude critic head (base.critic_linear)
     - Prune weights only (dim >= 2); do not prune biases / 1D params
@@ -33,32 +34,15 @@ class GMPIntervention(InterventionBase):
 
         p = ctx.params or {}
         self.final_sparsity: float = float(p.get("final_sparsity", 0.80))
-        self.tstart_frac: float = float(p.get("tstart_frac", 0.05))
-        self.tend_frac: float = float(p.get("tend_frac", 0.80))
-        self.pruning_freq_steps: int = int(p.get("pruning_freq_steps", 500))
+        # NOTE: tasks_per_cycle = number of pruning boundary steps within prune_cycle
+        #       (must match the actual number of train tasks in that cycle to reach final_sparsity).
+        self.tasks_per_cycle: int = int(p.get("tasks_per_cycle", 3))
+        self.prune_cycle: int = int(p.get("prune_cycle", 0))  # prune only on this cycle
+        self._allow_tasks_per_cycle_mismatch: bool = self._read_allow_mismatch_flag(p)
+        self._validated_prune_cycle: bool = False
 
-        # Backward compatibility: accept prune_cycle but ignore it.
-        if "prune_cycle" in p:
-            self.logger.warning(
-                "gmp deprecation | prune_cycle is ignored in global-step GMP schedule."
-            )
-
-        self.total_train_steps: int = int(p.get("total_train_steps", 0) or 0)
-
-        self._validate_schedule_params()
-        self._tstart: int = int(math.floor(self.tstart_frac * self.total_train_steps))
-        self._tend: int = int(math.floor(self.tend_frac * self.total_train_steps))
-        if self._tend <= self._tstart:
-            raise ValueError(
-                "GMP schedule invalid: tend <= tstart (tstart=%d, tend=%d). "
-                "Check tstart_frac/tend_frac and total_train_steps."
-                % (self._tstart, self._tend)
-            )
-
-        self._global_step: int = 0
-        self._pruning_activated: bool = False
-        self._logged_guidance: bool = False
-        self._last_target_sparsity: float = 0.0
+        # boundary pruning counter (counts only when we actually prune)
+        self._boundary_prune_step: int = 0
 
         # masks keyed by parameter name
         self._masks: Dict[str, torch.Tensor] = {}
@@ -72,57 +56,61 @@ class GMPIntervention(InterventionBase):
             self._masks[item.name] = torch.ones_like(item.param.data, device=item.param.data.device)
 
         self.logger.info(
-            "gmp init | final_sparsity=%.2f tstart_frac=%.3f tend_frac=%.3f freq=%d total_train_steps=%d prunable_tensors=%d",
+            "gmp init | final_sparsity=%.2f tasks_per_cycle=%d prune_cycle=%d prunable_tensors=%d",
             self.final_sparsity,
-            self.tstart_frac,
-            self.tend_frac,
-            self.pruning_freq_steps,
-            self.total_train_steps,
+            self.tasks_per_cycle,
+            self.prune_cycle,
             len(self._prunable),
         )
 
-    def _validate_schedule_params(self) -> None:
-        if not (0.0 <= self.tstart_frac < self.tend_frac <= 1.0):
-            raise ValueError(
-                "GMP schedule invalid: require 0 <= tstart_frac < tend_frac <= 1. "
-                f"Got tstart_frac={self.tstart_frac}, tend_frac={self.tend_frac}."
-            )
-        if self.pruning_freq_steps <= 0:
-            raise ValueError("GMP schedule invalid: pruning_freq_steps must be > 0.")
-        if not (0.0 < self.final_sparsity < 1.0):
-            raise ValueError("GMP schedule invalid: final_sparsity must be in (0, 1).")
-        if self.total_train_steps <= 0:
-            raise ValueError(
-                "GMP requires total_train_steps in ctx.params (computed from run budget)."
-            )
+    @staticmethod
+    def _read_allow_mismatch_flag(p: Dict[str, float]) -> bool:
+        env = os.getenv("GMP_ALLOW_TASKS_PER_CYCLE_MISMATCH", "").strip().lower()
+        if env in {"1", "true", "yes", "y", "on"}:
+            return True
+        return bool(p.get("gmp_allow_tasks_per_cycle_mismatch", False))
 
-    def _pruning_active(self, step: int) -> bool:
-        return self._tstart <= step <= self._tend
+    def _infer_train_tasks_per_cycle(self) -> Optional[int]:
+        # Main/tuning code can supply this in ctx.params for reliable validation.
+        for key in ("train_tasks_per_cycle", "tasks_per_cycle_actual"):
+            val = self.ctx.params.get(key, None)
+            if val is not None:
+                try:
+                    return int(val)
+                except Exception:
+                    return None
+        return None
 
-    def _target_sparsity(self, step: int) -> float:
-        if step <= self._tstart:
-            return 0.0
-        if step >= self._tend:
-            return float(self.final_sparsity)
-        p = (step - self._tstart) / float(self._tend - self._tstart)
-        p = max(0.0, min(1.0, p))
-        return float(self.final_sparsity * (1.0 - (1.0 - p) ** 3))
+    def _validate_tasks_per_cycle(self, cycle_id: int) -> None:
+        if self._validated_prune_cycle or cycle_id != self.prune_cycle:
+            return
+
+        actual = self._infer_train_tasks_per_cycle()
+        if actual is None:
+            self.logger.warning(
+                "gmp WARNING | tasks_per_cycle validation skipped: actual train tasks per cycle unknown. "
+                "Set ctx.params['train_tasks_per_cycle'] or export GMP_ALLOW_TASKS_PER_CYCLE_MISMATCH=1 to silence."
+            )
+            self._validated_prune_cycle = True
+            return
+
+        if actual != self.tasks_per_cycle:
+            msg = (
+                "GMP tasks_per_cycle mismatch: configured tasks_per_cycle=%d but experiment has %d train tasks per cycle. "
+                "To reach final_sparsity within prune_cycle, set tasks_per_cycle=%d. "
+                "Override by setting env GMP_ALLOW_TASKS_PER_CYCLE_MISMATCH=1 or intervention param "
+                "gmp_allow_tasks_per_cycle_mismatch=true."
+            )
+            if self._allow_tasks_per_cycle_mismatch:
+                self.logger.warning(msg, self.tasks_per_cycle, actual, actual)
+                self._validated_prune_cycle = True
+                return
+            raise ValueError(msg % (self.tasks_per_cycle, actual, actual))
+
+        self._validated_prune_cycle = True
 
     def on_task_start(self, cycle_id: int, task_run_id: int) -> None:
-        active = self._pruning_active(self._global_step)
-        self.logger.info(
-            "gmp task start | global_step=%d tstart=%d tend=%d active=%s",
-            self._global_step,
-            self._tstart,
-            self._tend,
-            str(active),
-        )
-        if active and not self._logged_guidance:
-            self.logger.info(
-                "gmp note | expect achieved_sparsity to approach final_sparsity=%.3f by tend",
-                self.final_sparsity,
-            )
-            self._logged_guidance = True
+        self._validate_tasks_per_cycle(cycle_id)
 
     # PARAMETER SELECTION
     def _collect_prunable_params(self) -> List[_PrunableParam]:
@@ -178,35 +166,62 @@ class GMPIntervention(InterventionBase):
             return 0.0
         return 1.0 - (active / total)
 
-    # TASK BOUNDARY LOGGING
+    # TASK BOUNDARY PRUNING
     def on_task_end(self, cycle_id: int, task_run_id: int) -> None:
         # Always enforce masks at boundaries too (safety)
         self._apply_masks_to_params_()
 
+        # Logging
         current = self._current_sparsity()
-        active = self._pruning_active(self._global_step)
-        target = self._target_sparsity(self._global_step)
-
         self.logger.info(
-            "gmp status | global_step=%d active=%s target=%.3f achieved=%.3f",
-            self._global_step,
-            str(active),
-            target,
-            current,
-        )
-
-        try:
-            self._emit_scalar("gmp/target_sparsity", float(target))
-            self._emit_scalar("gmp/achieved_sparsity", float(current))
-            self._emit_scalar("gmp/pruning_active", 1.0 if active else 0.0)
-        except Exception:
-            pass
-
-        if self._global_step >= self.total_train_steps and not self._pruning_activated:
-            raise ValueError(
-                "GMP pruning never activated during run. "
-                "Check total_train_steps or tstart_frac/tend_frac."
+            "gmp status | cycle=%d task=%d boundary_step=%d current_sparsity=%.3f",
+            cycle_id, task_run_id, self._boundary_prune_step, current
             )
+
+        # Only prune during prune_cycle (default cycle 0)
+        if cycle_id != self.prune_cycle:
+            return
+
+        # Increment boundary prune step (only for TRAIN tasks; experiment hook already handles that)
+        self._boundary_prune_step += 1
+
+        # target sparsity ramp across tasks_per_cycle boundaries
+        # after 1st boundary -> 1/tasks_per_cycle * final_sparsity
+        frac = min(1.0, self._boundary_prune_step / float(self.tasks_per_cycle))
+        target_sparsity = frac * self.final_sparsity
+
+        # prune only if we need to increase sparsity
+        current = self._current_sparsity()
+        if target_sparsity <= current + 1e-8:
+            self.logger.info(
+                "gmp boundary | cycle=%d task=%d step=%d target=%.3f current=%.3f (no-op)",
+                cycle_id,
+                task_run_id,
+                self._boundary_prune_step,
+                target_sparsity,
+                current,
+            )
+            return
+
+        self._prune_to_target_sparsity(target_sparsity)
+
+        # enforce weights immediately after pruning
+        self._apply_masks_to_params_()
+
+        # clear optimizer state for pruned weights?
+        # simplest + safe: clear ALL optimizer state so momentum doesn't revive "near-zero" dynamics
+        # but since we enforce hard masks, it's not strictly necessary.
+        # We keep it minimal: do nothing here.
+
+        new_sparsity = self._current_sparsity()
+        self.logger.info(
+            "gmp boundary | cycle=%d task=%d step=%d target=%.3f new=%.3f",
+            cycle_id,
+            task_run_id,
+            self._boundary_prune_step,
+            target_sparsity,
+            new_sparsity,
+        )
 
     def _prune_to_target_sparsity(self, target_sparsity: float) -> None:
         # compute total and desired active count
@@ -310,37 +325,3 @@ class GMPIntervention(InterventionBase):
     def after_optimizer_step(self) -> None:
         # enforce parameter masking so pruned weights stay zero
         self._apply_masks_to_params_()
-
-    def on_optimizer_step(self) -> None:
-        self._global_step += 1
-        active = self._pruning_active(self._global_step)
-        if not active:
-            return
-        if (self._global_step % self.pruning_freq_steps) != 0:
-            return
-
-        target = self._target_sparsity(self._global_step)
-        self._last_target_sparsity = target
-
-        current = self._current_sparsity()
-        if target <= current + 1e-8:
-            return
-
-        self._prune_to_target_sparsity(target)
-        self._apply_masks_to_params_()
-        self._pruning_activated = True
-
-        new_sparsity = self._current_sparsity()
-        self.logger.info(
-            "gmp prune | global_step=%d target=%.3f achieved=%.3f",
-            self._global_step,
-            target,
-            new_sparsity,
-        )
-
-        try:
-            self._emit_scalar("gmp/target_sparsity", float(target))
-            self._emit_scalar("gmp/achieved_sparsity", float(new_sparsity))
-            self._emit_scalar("gmp/pruning_active", 1.0)
-        except Exception:
-            pass

@@ -27,7 +27,9 @@
 from multiprocessing import Process, Pipe
 import gym
 import cloudpickle
+import numpy as np
 from continual_rl.utils.utils import Utils
+from continual_rl.envs.step_api import unpack_step
 
 
 def worker(conn, env_spec, output_dir):
@@ -41,10 +43,10 @@ def worker(conn, env_spec, output_dir):
     while True:
         cmd, data = conn.recv()
         if cmd == "step":
-            obs, reward, done, info = env.step(data)
-            if done:
+            obs, reward, terminal, info, _, _ = unpack_step(env.step(data))
+            if bool(np.any(terminal)):
                 obs = env.reset()
-            conn.send((obs, reward, done, info))
+            conn.send((obs, reward, terminal, info))
         elif cmd == "reset":
             obs = env.reset()
             conn.send(obs)
@@ -96,10 +98,10 @@ class ParallelEnv(gym.Env):
     def step(self, actions):
         for local, action in zip(self.locals, actions[1:]):
             local.send(("step", action))
-        obs, reward, done, info = self._local_env.step(actions[0])
-        if done:
+        obs, reward, terminal, info, _, _ = unpack_step(self._local_env.step(actions[0]))
+        if bool(np.any(terminal)):
             obs = self._local_env.reset()
-        results = zip(*[(obs, reward, done, info)] + [local.recv() for local in self.locals])
+        results = zip(*[(obs, reward, terminal, info)] + [local.recv() for local in self.locals])
         return results
 
     def render(self):

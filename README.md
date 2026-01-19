@@ -80,6 +80,22 @@ In addition to `--policy` and `--experiment`, the following command-line argumen
 are also permitted:
 * `--output-dir [tmp/<policy>_<experiment>_<timestamp>]`: Where logs and saved models are stored
 
+#### Reward pipeline diagnostics (PPO)
+To debug a zero-reward segment on Procgen, enable the reward pipeline diagnostics:
+
+```bash
+python main.py --policy ppo --experiment procgen_3_tasks_2_cycles_5m \
+    --debug_reward_pipeline \
+    --debug_reward_pipeline_interval 10000 \
+    --debug_reward_pipeline_first_steps 100
+```
+
+What to look for:
+- If raw reward is nonzero but shaped reward stays zero, investigate reward wrappers or clipping.
+- If episode ends remain 0 for long windows, check terminated/truncated handling or time-limit wrappers.
+- If argmax fraction stays near 1.0 early in training, action sampling may be deterministic.
+- If parameter delta norm is 0 for many updates, optimizer or gradient flow may be broken.
+
 
 Any policy configuration changes can be made simply by appending `--param new_value` to the arguments passed to main. The default policy configs
 (e.g. hyperparameters) are in the `config.py` file within the policy's folder, and any of them can be set in this way.

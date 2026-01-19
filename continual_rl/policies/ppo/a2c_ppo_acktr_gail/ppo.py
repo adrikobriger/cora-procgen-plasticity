@@ -4,6 +4,8 @@ With minor changes
 """
 
 import torch
+import math
+import logging
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -37,6 +39,23 @@ class PPO():
         self.optimizer = optim.Adam(actor_critic.parameters(), lr=lr, eps=eps)
         # ADDED FOR INTERVENTIONS
         self.intervention = None
+
+        # Diagnostics for zero-reward task issue.
+        self.debug_enabled = False
+        self._debug_logs = []
+        self._debug_last_stats = {}
+        self._debug_zero_delta_count = 0
+        self._logger = logging.getLogger(__name__)
+
+    def enable_debug(self, enabled: bool = True):
+        self.debug_enabled = bool(enabled)
+
+    def pop_debug_logs(self):
+        if not self._debug_logs:
+            return []
+        out = self._debug_logs
+        self._debug_logs = []
+        return out
 
     def update(self, rollouts, action_space):
         advantages = rollouts.returns[:-1] - rollouts.value_preds[:-1]
@@ -102,10 +121,60 @@ class PPO():
                 if self.intervention is not None:
                     self.intervention.before_optimizer_step()
 
-                nn.utils.clip_grad_norm_(self.actor_critic.parameters(),
+                total_norm = nn.utils.clip_grad_norm_(self.actor_critic.parameters(),
                                          self.max_grad_norm)
 
+                # DEBUG: grad/param integrity checks
+                if self.debug_enabled:
+                    grad_has_nan = False
+                    grad_has_inf = False
+                    for p in self.actor_critic.parameters():
+                        if p.grad is None:
+                            continue
+                        if torch.isnan(p.grad).any():
+                            grad_has_nan = True
+                        if torch.isinf(p.grad).any():
+                            grad_has_inf = True
+
+                    # snapshot params before step for delta norm
+                    params_before = [p.detach().clone() for p in self.actor_critic.parameters() if p.requires_grad]
+
                 self.optimizer.step()
+
+                if self.debug_enabled:
+                    delta_sq = 0.0
+                    param_has_nan = False
+                    param_has_inf = False
+                    for p, p0 in zip((p for p in self.actor_critic.parameters() if p.requires_grad), params_before):
+                        if torch.isnan(p).any():
+                            param_has_nan = True
+                        if torch.isinf(p).any():
+                            param_has_inf = True
+                        delta_sq += float((p.detach() - p0).pow(2).sum().item())
+                    delta_norm = math.sqrt(delta_sq) if delta_sq > 0 else 0.0
+
+                    if delta_norm == 0.0:
+                        self._debug_zero_delta_count += 1
+                    else:
+                        self._debug_zero_delta_count = 0
+
+                    self._debug_last_stats = {
+                        "grad_norm": float(total_norm) if total_norm is not None else float("nan"),
+                        "grad_has_nan": grad_has_nan,
+                        "grad_has_inf": grad_has_inf,
+                        "param_delta_norm": float(delta_norm),
+                        "param_has_nan": param_has_nan,
+                        "param_has_inf": param_has_inf,
+                        "zero_delta_count": int(self._debug_zero_delta_count),
+                        "loss": float(loss.item()),
+                    }
+
+                    self._debug_logs.extend([
+                        {"type": "scalar", "tag": "debug/grad_norm", "value": float(total_norm)},
+                        {"type": "scalar", "tag": "debug/param_delta_norm", "value": float(delta_norm)},
+                        {"type": "scalar", "tag": "debug/zero_param_delta_count", "value": int(self._debug_zero_delta_count)},
+                        {"type": "scalar", "tag": "debug/loss", "value": float(loss.item())},
+                    ])
 
                 # intervention hooks: after step + step counter 
                 if self.intervention is not None:

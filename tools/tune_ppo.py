@@ -34,6 +34,7 @@ from torch.utils.tensorboard import SummaryWriter
 from continual_rl.available_policies import get_available_policies
 from continual_rl.experiment_specs import get_available_experiments
 from continual_rl.experiments.tasks.task_base import TaskBase
+from continual_rl.utils.utils import Utils
 
 # Prefer the same evaluation mechanism as your intervention tuner.
 # If TaskSpec import fails in your continual_rl version, we fall back to continual_eval.
@@ -501,6 +502,99 @@ def apply_budget_override(experiment: Any, budget_override: Optional[int]) -> No
             task._rolling_return_count = max(1, min(task._rolling_return_count, 100))
 
 
+def apply_total_timesteps(experiment: Any, total_timesteps: int, cycle_count: int) -> Dict[str, Any]:
+    """
+    Split total_timesteps across TRAIN tasks and cycles.
+    Returns metadata including per-task budgets.
+    """
+    train_tasks = [t for t in getattr(experiment, "tasks", []) if _is_train_task(t)]
+    if not train_tasks:
+        raise ValueError("No train tasks found to apply total_timesteps.")
+
+    if cycle_count < 1:
+        raise ValueError("cycle_count must be >= 1")
+
+    per_task_total = total_timesteps // (len(train_tasks) * cycle_count)
+    remainder = total_timesteps - per_task_total * len(train_tasks) * cycle_count
+
+    per_task_budgets = []
+    for idx, task in enumerate(train_tasks):
+        extra = 1 if idx < remainder else 0
+        task_budget = per_task_total + extra
+        task_spec = getattr(task, "_task_spec", None)
+        if task_spec is not None:
+            task_spec._num_timesteps = int(task_budget)
+        if hasattr(task, "_rolling_return_count"):
+            task._rolling_return_count = max(1, min(task._rolling_return_count, 100))
+        per_task_budgets.append(task_budget)
+
+    # enforce cycles
+    if hasattr(experiment, "_cycle_count"):
+        experiment._cycle_count = int(cycle_count)
+
+    expected_total = sum(per_task_budgets) * cycle_count
+    return {
+        "train_task_count": len(train_tasks),
+        "cycle_count": cycle_count,
+        "per_task_budgets": per_task_budgets,
+        "expected_total": expected_total,
+    }
+
+
+def _wrap_env_spec_with_seed(env_spec, base_seed: int):
+    counter = {"i": 0}
+
+    def _next_seed() -> int:
+        seed = int(base_seed + counter["i"])
+        counter["i"] += 1
+        return seed
+
+    def _make():
+        seed = _next_seed()
+        env, _ = Utils.make_env(env_spec, seed_to_set=seed)
+        return env
+
+    # Attach seed provider for parallel envs
+    _make._seed_to_set = _next_seed  # type: ignore[attr-defined]
+    return _make
+
+
+def apply_env_seed(experiment: Any, base_seed: int) -> None:
+    """Ensure envs use deterministic seeds (per-env) based on base_seed."""
+    for task in getattr(experiment, "tasks", []):
+        task_spec = getattr(task, "_task_spec", None)
+        if task_spec is None:
+            continue
+        task_spec._env_spec = _wrap_env_spec_with_seed(task_spec.env_spec, base_seed)
+
+
+def _extract_procgen_env_ids(experiment: Any) -> List[str]:
+    env_ids: List[str] = []
+    for task in getattr(experiment, "tasks", []):
+        if _is_eval_task(task):
+            continue
+        task_spec = getattr(task, "_task_spec", None)
+        if task_spec is None:
+            continue
+        env, _ = Utils.make_env(task_spec.env_spec)
+        try:
+            env_ids.append(getattr(getattr(env, "spec", None), "id", None) or "unknown")
+        finally:
+            try:
+                env.close()
+            except Exception:
+                pass
+    return env_ids
+
+
+def _normalize_procgen_name(env_id: str) -> str:
+    if env_id is None:
+        return "unknown"
+    if env_id.startswith("procgen-"):
+        return env_id.replace("procgen-", "", 1)
+    return env_id
+
+
 def set_eval_mode(experiment: Any, mode: str, continual_testing_freq: Optional[int] = None) -> None:
     """
     Configure evaluation mode:
@@ -700,8 +794,31 @@ def run_trial(
             strict_verify=args.strict_verify,
         )
 
+        # Apply deterministic env seeding per seed
+        apply_env_seed(experiment, seed)
+
+        # Verify train tasks (exactly 3) and expected procgen env ids
+        train_tasks = [t for t in getattr(experiment, "tasks", []) if _is_train_task(t)]
+        if len(train_tasks) != 3:
+            raise ValueError(f"Expected exactly 3 train tasks, got {len(train_tasks)}")
+
+        env_ids = _extract_procgen_env_ids(experiment)
+        env_names = [_normalize_procgen_name(eid) for eid in env_ids]
+        expected = [t.strip() for t in args.tasks.split(",") if t.strip()]
+        if sorted(env_names) != sorted(expected):
+            raise ValueError(
+                f"Train task mismatch. Expected {expected}, got {env_names} (env_ids={env_ids})"
+            )
+
         set_eval_mode(experiment, args.eval_mode, continual_testing_freq=args.continual_testing_freq)
-        apply_budget_override(experiment, args.budget_override)
+
+        budget_info = apply_total_timesteps(experiment, args.total_timesteps, args.cycles)
+
+        # Enforce exact total timesteps
+        if budget_info["expected_total"] != int(args.total_timesteps):
+            raise ValueError(
+                f"Total timesteps mismatch: expected {budget_info['expected_total']} vs requested {args.total_timesteps}"
+            )
 
         # Determine scoring tasks for THIS experiment instance
         scoring_tasks, fallback_used = _select_scoring_tasks(experiment, args.score_tasks)
@@ -722,6 +839,16 @@ def run_trial(
 
         print(f"[Trial {trial_idx:03d} | Seed {seed}] Starting training...")
         experiment.try_run(policy, summary_writer=writer)
+
+        # Verify executed timesteps from run metadata
+        from continual_rl.experiments.run_metadata import RunMetadata
+        run_meta = RunMetadata(seed_dir)
+        final_steps = int(run_meta.total_train_timesteps)
+        print(f"[Trial {trial_idx:03d} | Seed {seed}] Final train timesteps: {final_steps}")
+        if final_steps != int(args.total_timesteps):
+            raise ValueError(
+                f"Executed timesteps mismatch: {final_steps} vs target {args.total_timesteps}"
+            )
 
         aggregates = {"objective": float("nan")}
         per_task: List[Dict[str, Any]] = []
@@ -748,6 +875,9 @@ def run_trial(
             "output_dir": seed_dir,
             "tb_dir": tb_dir,
             "scoring_task_ids": scoring_ids,
+            "budget_info": budget_info,
+            "final_train_timesteps": final_steps,
+            "train_env_ids": env_ids,
         })
 
         obj_val = aggregates.get("objective", float("nan"))
@@ -783,19 +913,28 @@ def run_trial(
         "experiment": args.experiment,
         "policy": args.policy,
         "num_processes": args.num_processes,
-        "budget_override": args.budget_override,
+        "total_timesteps": args.total_timesteps,
+        "cycle_count": args.cycles,
+        "task_list": [t.strip() for t in args.tasks.split(",") if t.strip()],
         "eval_mode": args.eval_mode,
         "episodes_per_task": args.episodes_per_task,
         "objective_metric": args.objective,
         "continual_testing_freq": args.continual_testing_freq,
         "score_tasks": args.score_tasks,
         "scoring_tasks_info": scoring_tasks_info,
+        "train_env_ids": seed_runs[0].get("train_env_ids", []) if seed_runs else [],
     }
 
     print(
         f"[Trial {trial_idx:03d}] Aggregated objective ({args.objective}) = "
         f"{objective_mean:.4f} ± {objective_std:.4f} (stderr={objective_stderr:.4f})"
     )
+
+    # Per-trial summary JSON (single file per trial)
+    summary_path = os.path.join(trial_dir, "trial_summary.json")
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2)
+
     return result
 
 
@@ -896,7 +1035,9 @@ def write_best_ppo_json(path: str, results: List[Dict[str, Any]]) -> None:
             "seed": best.get("seeds", [None])[0],
             "seeds": best.get("seeds"),
             "num_processes": best.get("num_processes"),
-            "budget_override": best.get("budget_override"),
+            "total_timesteps": best.get("total_timesteps"),
+            "cycle_count": best.get("cycle_count"),
+            "task_list": best.get("task_list"),
             "eval_mode": best.get("eval_mode"),
             "episodes_per_task": best.get("episodes_per_task"),
             "continual_testing_freq": best.get("continual_testing_freq"),
@@ -929,10 +1070,10 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=r"""
 Example usage (RETENTION-aligned PPO baseline):
-  python tools/tune_ppo.py --experiment procgen_3_tasks_1_cycle_5m_tuning \
-      --budget_override 100000 --trials 50 --eval_mode final_only \
-      --episodes_per_task 10 --objective iqm --num_processes 1 \
-      --seeds "0,1,2" --score_tasks train --strict_verify
+    python tools/tune_ppo.py --experiment procgen_3_tasks_1_cycle_1M \
+            --total_timesteps 1000000 --trials 50 --eval_mode final_only \
+            --episodes_per_task 10 --objective iqm --num_processes 1 \
+            --seeds "0,1,2" --score_tasks train --strict_verify
 
 Notes:
   - CORA describes evaluating E=10 episodes at evaluation points and aggregating across seeds.
@@ -955,10 +1096,14 @@ Notes:
                         help="Disable shuffling grid combinations (default: shuffle enabled)")
     parser.set_defaults(grid_shuffle=True)
 
-    parser.add_argument("--budget_override", default=None, type=int,
-                        help="Override num_timesteps for train tasks (required unless --allow_full_budget)")
-    parser.add_argument("--allow_full_budget", action="store_true",
-                        help="Allow running with full budget (no override required)")
+    parser.add_argument("--total_timesteps", default=1_000_000, type=int,
+                        help="Total TRAIN timesteps across all tasks/cycles (default: 1,000,000)")
+    parser.add_argument("--cycles", default=1, type=int,
+                        help="Number of cycles through tasks (default: 1)")
+    parser.add_argument("--tasks", default="climber-v0,dodgeball-v0,fruitbot-v0", type=str,
+                        help="Comma-separated task env names (exactly 3) for tuning")
+    parser.add_argument("--allow_nonfinal_budget", action="store_true",
+                        help="Allow budgets other than 1,000,000 total timesteps")
     parser.add_argument("--num_processes", default=1, type=int,
                         help="Number of parallel environments (default: 1)")
 
@@ -1002,11 +1147,25 @@ Notes:
 def main():
     args = parse_args()
 
-    if args.budget_override is None and not args.allow_full_budget:
+    # Final-budget guardrails
+    if args.total_timesteps != 1_000_000 and not args.allow_nonfinal_budget:
         raise ValueError(
-            "--budget_override is required unless --allow_full_budget is set. "
-            "This prevents accidentally running full-budget experiments during tuning."
+            "--total_timesteps must be 1,000,000 for final-budget tuning. "
+            "Use --allow_nonfinal_budget to override explicitly."
         )
+    if args.cycles != 1 and not args.allow_nonfinal_budget:
+        raise ValueError(
+            "--cycles must be 1 for final-budget tuning. "
+            "Use --allow_nonfinal_budget to override explicitly."
+        )
+
+    task_list = [t.strip() for t in args.tasks.split(",") if t.strip()]
+    if len(task_list) != 3:
+        raise ValueError("--tasks must list exactly 3 tasks.")
+
+    seed_list = _parse_seeds_arg(args.seeds, args.seed)
+    if seed_list != [0, 1, 2] and not args.allow_nonfinal_budget:
+        raise ValueError("--seeds must be exactly '0,1,2' for final-budget tuning. Use --allow_nonfinal_budget to override.")
 
     try:
         torch.multiprocessing.set_start_method("spawn")
@@ -1019,11 +1178,14 @@ def main():
 
     print("PPO Baseline Tuning")
     print("=" * 60)
+    print(f"PPO tuning: {args.total_timesteps:,} total timesteps | 3 seeds | 3 tasks | {args.cycles} cycle")
     print(f"Experiment: {args.experiment}")
     print(f"Policy: {args.policy}")
     print(f"Search: {args.search}")
     print(f"Trials: {args.trials}")
-    print(f"Budget override: {args.budget_override}")
+    print(f"Total timesteps: {args.total_timesteps}")
+    print(f"Cycles: {args.cycles}")
+    print(f"Tasks: {args.tasks}")
     print(f"Eval mode: {args.eval_mode}")
     print(f"Objective: {args.objective}")
     print(f"Episodes/task: {args.episodes_per_task}")
@@ -1065,7 +1227,9 @@ def main():
             "trials": args.trials,
             "seed": args.seed,
             "seeds": args.seeds,
-            "budget_override": args.budget_override,
+            "total_timesteps": args.total_timesteps,
+            "cycles": args.cycles,
+            "tasks": task_list,
             "num_processes": args.num_processes,
             "eval_mode": args.eval_mode,
             "continual_testing_freq": args.continual_testing_freq,
@@ -1082,6 +1246,9 @@ def main():
     # One-time scoring task info (documented intent)
     scoring_tasks_info = {
         "score_tasks": args.score_tasks,
+        "tasks": task_list,
+        "total_timesteps": args.total_timesteps,
+        "cycles": args.cycles,
         "definition": {
             "train": "Only tasks not marked eval_mode and not suffixed _eval (retention-aligned).",
             "eval": "Only tasks marked eval_mode or suffixed _eval (generalization).",
@@ -1126,6 +1293,9 @@ def main():
                 "policy": args.policy,
                 "objective_metric": args.objective,
                 "score_tasks": args.score_tasks,
+                "total_timesteps": args.total_timesteps,
+                "cycle_count": args.cycles,
+                "task_list": [t.strip() for t in args.tasks.split(",") if t.strip()],
             }
             all_results.append(fail_result)
 

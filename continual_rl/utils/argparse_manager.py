@@ -45,6 +45,29 @@ class ArgparseManager(object):
             default=None,
             help="Path to a JSON file containing default hyperparameters to load."
         )
+        command_line_parser.add_argument(
+            "--debug_reward_pipeline",
+            action="store_true",
+            help="Enable reward pipeline diagnostics (default: off)."
+        )
+        command_line_parser.add_argument(
+            "--debug_reward_pipeline_interval",
+            type=int,
+            default=None,
+            help="Steps between debug summaries (only if debug enabled)."
+        )
+        command_line_parser.add_argument(
+            "--debug_reward_pipeline_first_steps",
+            type=int,
+            default=None,
+            help="Trace the first N env steps in detail (only if debug enabled)."
+        )
+        command_line_parser.add_argument(
+            "--debug_reward_pipeline_max_actions",
+            type=int,
+            default=None,
+            help="Max discrete actions to log per-window histograms."
+        )
 
         return command_line_parser
 
@@ -126,6 +149,17 @@ class ArgparseManager(object):
 
                 raw_experiment["intervention_params"] = parsed
             # END ADDED
+
+            # DEBUG: reward pipeline diagnostics
+            if getattr(args, "debug_reward_pipeline", False):
+                raw_experiment["debug_reward_pipeline"] = True
+            if getattr(args, "debug_reward_pipeline_interval", None) is not None:
+                raw_experiment["debug_reward_pipeline_interval"] = int(args.debug_reward_pipeline_interval)
+            if getattr(args, "debug_reward_pipeline_first_steps", None) is not None:
+                raw_experiment["debug_reward_pipeline_first_steps"] = int(args.debug_reward_pipeline_first_steps)
+            if getattr(args, "debug_reward_pipeline_max_actions", None) is not None:
+                raw_experiment["debug_reward_pipeline_max_actions"] = int(args.debug_reward_pipeline_max_actions)
+            # END DEBUG
 
             if "experiment" not in raw_experiment:
                 raise ArgumentMissingException("--experiment required in command-line mode")

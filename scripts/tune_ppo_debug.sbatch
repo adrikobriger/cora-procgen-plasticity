@@ -3,7 +3,7 @@
 #SBATCH --partition=digitallab
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=64
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --time=0-02:00:00
@@ -18,21 +18,26 @@ VENV="/scratch/s5579783/venvs/cora"
 EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_1_cycle_10k_debug}"
 TRIALS="${TRIALS:-2}"
 SEARCH="${SEARCH:-random}"
-BUDGET_OVERRIDE="${BUDGET_OVERRIDE:-5000}"
+TOTAL_TIMESTEPS="${TOTAL_TIMESTEPS:-10000}"
+CYCLES="${CYCLES:-1}"
+TASKS="${TASKS:-climber-v0,dodgeball-v0,fruitbot-v0}"
 EVAL_MODE="${EVAL_MODE:-final_only}"
 EPISODES_PER_TASK="${EPISODES_PER_TASK:-5}"
 OBJECTIVE="${OBJECTIVE:-iqm}"
-NUM_PROCESSES="${NUM_PROCESSES:-16}"
+NUM_PROCESSES="${NUM_PROCESSES:-32}"
 SEED="${SEED:-0}"
-SEEDS="${SEEDS:-0,1}"
+SEEDS="${SEEDS:-0,1,2}"
 
 mkdir -p "$REPO/logs"
 cd "$REPO"
 source "$VENV/bin/activate"
 
 export PYTHONUNBUFFERED=1
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
-export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
 
 echo "PPO Baseline Hyperparameter Tuning (DEBUG!)"
 echo "HOSTNAME: $(hostname)"
@@ -42,7 +47,9 @@ echo "------------------------------------------------------------"
 echo "EXPERIMENT: $EXPERIMENT"
 echo "TRIALS: $TRIALS"
 echo "SEARCH: $SEARCH"
-echo "BUDGET_OVERRIDE: $BUDGET_OVERRIDE"
+echo "TOTAL_TIMESTEPS: $TOTAL_TIMESTEPS"
+echo "CYCLES: $CYCLES"
+echo "TASKS: $TASKS"
 echo "EVAL_MODE: $EVAL_MODE"
 echo "EPISODES_PER_TASK: $EPISODES_PER_TASK"
 echo "OBJECTIVE: $OBJECTIVE"
@@ -65,12 +72,15 @@ PY
 
 echo "Starting PPO tuning (DEBUG)..."
 
-srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" python tools/tune_ppo.py \
+srun --cpu-bind=cores --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" python tools/tune_ppo.py \
   --experiment "$EXPERIMENT" \
   --policy ppo \
   --trials "$TRIALS" \
   --search "$SEARCH" \
-  --budget_override "$BUDGET_OVERRIDE" \
+  --total_timesteps "$TOTAL_TIMESTEPS" \
+  --cycles "$CYCLES" \
+  --tasks "$TASKS" \
+  --allow_nonfinal_budget \
   --eval_mode "$EVAL_MODE" \
   --episodes_per_task "$EPISODES_PER_TASK" \
   --objective "$OBJECTIVE" \

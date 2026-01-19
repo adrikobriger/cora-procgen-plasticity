@@ -32,6 +32,12 @@ class PPOPolicyConfig(ConfigBase):
         self.intervention_type = "dense"
         self.intervention_params = {}
 
+        # Diagnostics for zero-reward task issue.
+        self.debug_reward_pipeline = False
+        self.debug_reward_pipeline_interval = 10000
+        self.debug_reward_pipeline_first_steps = 100
+        self.debug_reward_pipeline_max_actions = 20
+
     def _load_from_dict_internal(self, config_dict):
         loaded_policy_config = self._auto_load_class_parameters(config_dict)
         return loaded_policy_config

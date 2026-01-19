@@ -26,6 +26,14 @@ import os
 import random
 import traceback
 from typing import Any, Dict, List, Optional, Tuple
+import warnings
+
+# Suppress Gym deprecation warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="gym")
+warnings.filterwarnings("ignore", category=UserWarning, module="gym")
+warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
+warnings.filterwarnings("ignore", message=".*old step API.*")
+warnings.filterwarnings("ignore", message=".*np.bool8.*")
 
 import numpy as np
 import torch
@@ -1001,6 +1009,9 @@ Notes:
 
 def main():
     args = parse_args()
+
+    # Fix thread oversubscription for parallel RL env stepping
+    torch.set_num_threads(1)
 
     if args.budget_override is None and not args.allow_full_budget:
         raise ValueError(

@@ -100,7 +100,8 @@ class ParallelEnv(gym.Env):
         if done:
             obs = self._local_env.reset()
         results = zip(*[(obs, reward, done, info)] + [local.recv() for local in self.locals])
-        return results
+        # Convert zip iterator to lists to properly expose (obs_list, reward_list, done_list, info_list)
+        return tuple(map(list, results))
 
     def render(self):
         raise NotImplementedError

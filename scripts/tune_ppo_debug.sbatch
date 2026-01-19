@@ -31,8 +31,12 @@ cd "$REPO"
 source "$VENV/bin/activate"
 
 export PYTHONUNBUFFERED=1
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
-export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+# Fix thread oversubscription: 1 thread per process for RL env stepping
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
 
 echo "PPO Baseline Hyperparameter Tuning (DEBUG!)"
 echo "HOSTNAME: $(hostname)"
@@ -65,7 +69,7 @@ PY
 
 echo "Starting PPO tuning (DEBUG)..."
 
-srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" python tools/tune_ppo.py \
+srun --cpu-bind=cores --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" python tools/tune_ppo.py \
   --experiment "$EXPERIMENT" \
   --policy ppo \
   --trials "$TRIALS" \

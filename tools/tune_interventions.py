@@ -28,6 +28,14 @@ import math
 import itertools
 import numbers
 import datetime
+import warnings
+
+# Suppress Gym deprecation warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="gym")
+warnings.filterwarnings("ignore", category=UserWarning, module="gym")
+warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
+warnings.filterwarnings("ignore", message=".*old step API.*")
+warnings.filterwarnings("ignore", message=".*np.bool8.*")
 import traceback
 import hashlib
 import numpy as np
@@ -1414,6 +1422,9 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # Fix thread oversubscription for parallel RL env stepping
+    torch.set_num_threads(1)
 
     # Enforce primary metric consistency with objective
     if args.objective in {"mean", "iqm"} and args.primary_metric != args.objective:

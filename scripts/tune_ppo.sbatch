@@ -3,7 +3,7 @@
 #SBATCH --partition=digitallab
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=32
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --time=3-00:00:00
@@ -15,14 +15,14 @@ set -euo pipefail
 REPO="/scratch/s5579783/cora-procgen-plasticity"
 VENV="/scratch/s5579783/venvs/cora"
 
-EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_1_cycle_5m_tuning}"
-TRIALS="${TRIALS:-20}"
+EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_1_cycle_1M}"
+TRIALS="${TRIALS:-10}"
 SEARCH="${SEARCH:-random}"
-BUDGET_OVERRIDE="${BUDGET_OVERRIDE:-100000}"
+BUDGET_OVERRIDE="${BUDGET_OVERRIDE:-1000000}"
 EVAL_MODE="${EVAL_MODE:-final_only}"
 EPISODES_PER_TASK="${EPISODES_PER_TASK:-10}"
 OBJECTIVE="${OBJECTIVE:-iqm}"
-NUM_PROCESSES="${NUM_PROCESSES:-16}"
+NUM_PROCESSES="${NUM_PROCESSES:-32}"
 SEED="${SEED:-0}"
 SEEDS="${SEEDS:-0,1,2}"
 
@@ -31,8 +31,12 @@ cd "$REPO"
 source "$VENV/bin/activate"
 
 export PYTHONUNBUFFERED=1
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
-export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+# Fix thread oversubscription: 1 thread per process for RL env stepping
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
 
 echo "PPO Baseline Hyperparameter Tuning!"
 echo "HOSTNAME: $(hostname)"
@@ -65,7 +69,7 @@ PY
 
 echo "Starting PPO tuning..."
 
-srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" python tools/tune_ppo.py \
+srun --cpu-bind=cores --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" python tools/tune_ppo.py \
   --experiment "$EXPERIMENT" \
   --policy ppo \
   --trials "$TRIALS" \

@@ -3,7 +3,7 @@
 #SBATCH --partition=digitallab
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=32
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --time=3-00:00:00
@@ -23,7 +23,7 @@ BUDGET_OVERRIDE="${BUDGET_OVERRIDE:-100000}"
 EVAL_MODE="${EVAL_MODE:-final_only}"
 EPISODES_PER_TASK="${EPISODES_PER_TASK:-10}"
 OBJECTIVE="${OBJECTIVE:-composite}"
-NUM_PROCESSES="${NUM_PROCESSES:-16}"
+NUM_PROCESSES="${NUM_PROCESSES:-32}"
 SEED="${SEED:-0}"
 TRIAL_SEEDS="${TRIAL_SEEDS:-0,1,2}"
 FINAL_EVAL_SET="${FINAL_EVAL_SET:-train}"
@@ -35,8 +35,12 @@ cd "$REPO"
 source "$VENV/bin/activate"
 
 export PYTHONUNBUFFERED=1
+# Fix thread oversubscription: 1 thread per process for RL env stepping
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
 
 echo "Intervention Hyperparameter Tuning!"
 echo "HOSTNAME: $(hostname)"
@@ -70,7 +74,8 @@ PY
 
 echo "Starting Intervention tuning..."
 
-PYTHONWARNINGS=ignore python tools/tune_interventions.py \
+srun --cpu-bind=cores --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" \
+  python tools/tune_interventions.py \
     --experiment "$EXPERIMENT" \
     --method "$METHOD" \
     --ppo_config "$PPO_CONFIG" \

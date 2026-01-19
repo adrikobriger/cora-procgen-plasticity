@@ -35,7 +35,6 @@ from gym import spaces
 import torch
 import cv2
 cv2.ocl.setUseOpenCL(False)
-from continual_rl.envs.step_api import unpack_step
 
 
 class NoopResetEnv(gym.Wrapper):
@@ -59,14 +58,13 @@ class NoopResetEnv(gym.Wrapper):
         assert noops > 0
         obs = None
         for _ in range(noops):
-            obs, _, terminal, _, _, _ = unpack_step(self.env.step(self.noop_action))
-            if bool(np.any(terminal)):
+            obs, _, done, _ = self.env.step(self.noop_action)
+            if done:
                 obs = self.env.reset(**kwargs)
         return obs
 
     def step(self, ac):
-        obs, reward, done, info, _, _ = unpack_step(self.env.step(ac))
-        return obs, reward, done, info
+        return self.env.step(ac)
 
 
 class FireResetEnv(gym.Wrapper):
@@ -78,17 +76,16 @@ class FireResetEnv(gym.Wrapper):
 
     def reset(self, **kwargs):
         self.env.reset(**kwargs)
-        obs, _, terminal, _, _, _ = unpack_step(self.env.step(1))
-        if bool(np.any(terminal)):
+        obs, _, done, _ = self.env.step(1)
+        if done:
             self.env.reset(**kwargs)
-        obs, _, terminal, _, _, _ = unpack_step(self.env.step(2))
-        if bool(np.any(terminal)):
+        obs, _, done, _ = self.env.step(2)
+        if done:
             self.env.reset(**kwargs)
         return obs
 
     def step(self, ac):
-        obs, reward, done, info, _, _ = unpack_step(self.env.step(ac))
-        return obs, reward, done, info
+        return self.env.step(ac)
 
 
 class EpisodicLifeEnv(gym.Wrapper):
@@ -104,9 +101,8 @@ class EpisodicLifeEnv(gym.Wrapper):
         self.real_episode_return = 0
 
     def step(self, action):
-        obs, reward, terminal, info, _, _ = unpack_step(self.env.step(action))
-        done = terminal
-        self.was_real_done = bool(np.any(done))
+        obs, reward, done, info = self.env.step(action)
+        self.was_real_done = done
         self.real_episode_return += reward
         episode_return_to_report = None
 
@@ -141,7 +137,7 @@ class EpisodicLifeEnv(gym.Wrapper):
             obs = self.env.reset(**kwargs)
         else:
             # no-op step to advance from terminal/lost life state
-            obs, _, _, _, _, _ = unpack_step(self.env.step(0))
+            obs, _, _, _ = self.env.step(0)
         self.lives = self.env.unwrapped.ale.lives()
         return obs
 
@@ -159,12 +155,11 @@ class MaxAndSkipEnv(gym.Wrapper):
         total_reward = 0.0
         done = None
         for i in range(self._skip):
-            obs, reward, terminal, info, _, _ = unpack_step(self.env.step(action))
-            done = terminal
+            obs, reward, done, info = self.env.step(action)
             if i == self._skip - 2: self._obs_buffer[0] = obs
             if i == self._skip - 1: self._obs_buffer[1] = obs
             total_reward += reward
-            if bool(np.any(done)):
+            if done:
                 break
         # Note that the observation on the done=True frame
         # doesn't matter
@@ -276,7 +271,7 @@ class FrameStack(gym.Wrapper):
         return self._get_ob()
 
     def step(self, action):
-        ob, reward, done, info, _, _ = unpack_step(self.env.step(action))
+        ob, reward, done, info = self.env.step(action)
         self.frames.append(ob)
         return self._get_ob(), reward, done, info
 
@@ -351,16 +346,11 @@ class TimeLimit(gym.Wrapper):
         self._elapsed_steps = 0
 
     def step(self, ac):
-        observation, reward, done, info, _, _ = unpack_step(self.env.step(ac))
+        observation, reward, done, info = self.env.step(ac)
         self._elapsed_steps += 1
         if self._elapsed_steps >= self._max_episode_steps:
             done = True
             info['TimeLimit.truncated'] = True
-            try:
-                info['_truncated'] = True
-                info['_terminated'] = False
-            except Exception:
-                pass
         return observation, reward, done, info
 
     def reset(self, **kwargs):
@@ -373,8 +363,7 @@ class ClipActionsWrapper(gym.Wrapper):
         import numpy as np
         action = np.nan_to_num(action)
         action = np.clip(action, self.action_space.low, self.action_space.high)
-        obs, reward, done, info, _, _ = unpack_step(self.env.step(action))
-        return obs, reward, done, info
+        return self.env.step(action)
 
     def reset(self, **kwargs):
         return self.env.reset(**kwargs)

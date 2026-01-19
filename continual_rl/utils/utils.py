@@ -50,14 +50,6 @@ class Utils(object):
         make_env_tries = 0
         env = None
 
-        # If env_spec provides a deterministic seed generator, use it
-        if seed_to_set is None and hasattr(env_spec, "_seed_to_set"):
-            try:
-                seed_to_set = env_spec._seed_to_set()  # type: ignore[attr-defined]
-                create_seed = False
-            except Exception:
-                pass
-
         while env is None:
             try:
                 if isinstance(env_spec, types.LambdaType):

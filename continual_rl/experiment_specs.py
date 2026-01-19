@@ -244,6 +244,25 @@ def get_available_experiments():
         # ============ Procgen ==========
         # ===============================
 
+        "procgen_3_tasks_5_cycles_100k": create_procgen_sequence_loader(
+            "procgen_3_tasks_5_cycles_100k",
+            ["climber-v0",
+             "dodgeball-v0",
+             "fruitbot-v0"],
+            num_timesteps=1e5,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=True,
+            eval_task_override_params=dict(
+                num_levels=0,
+            ),
+            continual_testing_freq=0.25e6,
+            cycle_count=5,
+        ),
+
         "procgen_6_tasks_5_cycles": create_procgen_sequence_loader(
             # using same games as section 5.3 of https://openreview.net/pdf?id=Qun8fv4qSby
             "procgen_6_tasks_5_cycles",
@@ -353,6 +372,44 @@ def get_available_experiments():
             ["climber-v0",
              "dodgeball-v0",
              "fruitbot-v0"],
+            num_timesteps=5e5,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=True,
+            eval_task_override_params=dict(
+                num_levels=0,
+            ),
+            continual_testing_freq=0.25e6,
+            cycle_count=1,
+        ),
+
+        "procgen_3_tasks_1_cycle_500k_ninja": create_procgen_sequence_loader(
+            "procgen_3_tasks_1_cycle_500k_ninja",
+            ["ninja-v0",
+             "dodgeball-v0",
+             "fruitbot-v0"],
+            num_timesteps=5e5,
+            task_params=dict(
+                num_levels=200,
+                start_level=0,
+                distribution_mode="easy",
+            ),
+            add_eval_task=True,
+            eval_task_override_params=dict(
+                num_levels=0,
+            ),
+            continual_testing_freq=0.25e6,
+            cycle_count=1,
+        ),
+
+        "procgen_3_tasks_1_cycle_500k_starpilot": create_procgen_sequence_loader(
+            "procgen_3_tasks_1_cycle_500k_ninja",
+            ["starpilot-v0",
+             "dodgeball-v0",
+             "bigfish-v0"],
             num_timesteps=5e5,
             task_params=dict(
                 num_levels=200,

@@ -87,3 +87,23 @@ if __name__ == "__main__":
         pass
 
     experiment.try_run(policy, summary_writer=summary_writer)
+
+    import os, random
+    import numpy as np
+    import torch
+
+    def _set_global_seeds(seed: int, deterministic_torch: bool = False) -> None:
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        if deterministic_torch:
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+
+    _seed_env = os.getenv("CONTINUAL_RL_SEED")
+    if _seed_env is not None and _seed_env.strip() != "":
+        seed = int(_seed_env)
+        _set_global_seeds(seed)
+        print(f"[main.py] Using CONTINUAL_RL_SEED={seed}")

@@ -1,5 +1,5 @@
 {
-	"learning_rate": 0.0006549765787793988,
+	"learning_rate": 3e-4,
 	"clip_param": 0.20093737116347804,
 	"entropy_coef": 0.0005763308777096957,
 	"value_loss_coef": 1.5726573572751419,

@@ -1,0 +1,114 @@
+[
+  {
+    "cycle": 0,
+    "task_run_idx": -1,
+    "label": "pre_train",
+    "timestamp": "2026-01-20T06:26:44.019125",
+    "aggregate_mean": 2.6666666666666665,
+    "aggregate_iqm": 2.6666666666666665,
+    "per_task": [
+      {
+        "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+        "mean": 2.0,
+        "iqm": 2.0,
+        "raw_returns": null
+      },
+      {
+        "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+        "mean": 2.0,
+        "iqm": 2.0,
+        "raw_returns": null
+      },
+      {
+        "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+        "mean": 4.0,
+        "iqm": 4.0,
+        "raw_returns": null
+      }
+    ]
+  },
+  {
+    "cycle": 0,
+    "task_run_idx": 0,
+    "label": "post_task",
+    "timestamp": "2026-01-20T06:32:38.447395",
+    "aggregate_mean": 3.0,
+    "aggregate_iqm": 3.0,
+    "per_task": [
+      {
+        "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+        "mean": 8.0,
+        "iqm": 8.0,
+        "raw_returns": null
+      },
+      {
+        "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+        "mean": 0.0,
+        "iqm": 0.0,
+        "raw_returns": null
+      },
+      {
+        "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+        "mean": 1.0,
+        "iqm": 1.0,
+        "raw_returns": null
+      }
+    ]
+  },
+  {
+    "cycle": 0,
+    "task_run_idx": 1,
+    "label": "post_task",
+    "timestamp": "2026-01-20T06:38:31.885339",
+    "aggregate_mean": 0.5,
+    "aggregate_iqm": 0.5,
+    "per_task": [
+      {
+        "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+        "mean": 1.5,
+        "iqm": 1.5,
+        "raw_returns": null
+      },
+      {
+        "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+        "mean": 0.0,
+        "iqm": 0.0,
+        "raw_returns": null
+      },
+      {
+        "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+        "mean": 0.0,
+        "iqm": 0.0,
+        "raw_returns": null
+      }
+    ]
+  },
+  {
+    "cycle": 0,
+    "task_run_idx": 2,
+    "label": "post_task",
+    "timestamp": "2026-01-20T06:44:23.820125",
+    "aggregate_mean": 1.3333333333333333,
+    "aggregate_iqm": 1.3333333333333333,
+    "per_task": [
+      {
+        "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+        "mean": 3.5,
+        "iqm": 3.5,
+        "raw_returns": null
+      },
+      {
+        "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+        "mean": 0.0,
+        "iqm": 0.0,
+        "raw_returns": null
+      },
+      {
+        "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+        "mean": 0.5,
+        "iqm": 0.5,
+        "raw_returns": null
+      }
+    ]
+  }
+]

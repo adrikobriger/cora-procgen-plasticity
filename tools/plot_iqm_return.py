@@ -348,9 +348,9 @@ def parse_seed_from_path(run_path: str) -> Tuple[Optional[int], Optional[str]]:
     path = Path(run_path)
     parts = path.parts
     
-    # Look for seed_<k> pattern in path components
+    # Look for seed_<k> pattern in path components (e.g., seed_0, seed_1_timestamp, etc.)
     for part in parts:
-        match = re.match(r'^seed[_-]?(\d+)$', part.lower())
+        match = re.match(r'^seed[_-]?(\d+)', part.lower())
         if match:
             return int(match.group(1)), part
     
@@ -1354,6 +1354,205 @@ def plot_method(
             )
 
 
+def plot_grouped_comparisons(
+    methods: Dict[str, Dict[int, Tuple[np.ndarray, np.ndarray]]],
+    out_dir: Path,
+    formats: List[str] = ['png'],
+    task_length: int = 500_000,
+    num_tasks: int = 3,
+    grid_step: int = 50000,
+) -> int:
+    """
+    Create three grouped comparison plots showing mean IQM return only (no CI).
+    All plots use the same y-axis limits for direct comparability.
+    
+    Groups:
+    1. Sparse methods: GMP, SET
+    2. Reset-based methods: ReDo, Partial Reinit
+    3. Baselines: Dense PPO, Reset
+    
+    Args:
+        methods: Dict mapping method name -> seed -> (steps, values)
+        out_dir: Output directory for plots
+        formats: List of output formats (e.g., ['png', 'pdf'])
+        task_length: Length of each task in environment steps (default 500,000)
+        num_tasks: Number of tasks (default 3)
+        grid_step: Spacing for common x-grid
+        
+    Returns:
+        Number of plots created
+    """
+    # Define the three groups
+    groups = [
+        {
+            'name': 'sparse_methods',
+            'title': 'Sparse Methods – IQM Return',
+            'methods': ['GMP', 'SET'],
+            'colors': {'GMP': '#ff7f0e', 'SET': '#8c564b'}  # orange, brown
+        },
+        {
+            'name': 'reset_based_methods',
+            'title': 'Reset-Based Methods – IQM Return',
+            'methods': ['ReDo', 'Partial Reinit'],
+            'colors': {'ReDo': '#d62728', 'Partial Reinit': '#2ca02c'}  # red, green
+        },
+        {
+            'name': 'baselines',
+            'title': 'Baselines – IQM Return',
+            'methods': ['Dense PPO', 'Reset'],
+            'colors': {'Dense PPO': '#1f77b4', 'Reset': '#9467bd'}  # blue, purple
+        }
+    ]
+    
+    # STEP 1: Compute mean curves for all methods that will be plotted
+    method_means = {}
+    global_y_min = float('inf')
+    global_y_max = float('-inf')
+    
+    for group in groups:
+        for method_name in group['methods']:
+            if method_name not in methods:
+                print(f"  ⚠ Method '{method_name}' not found in data, skipping")
+                continue
+            
+            seed_data = methods[method_name]
+            if not seed_data:
+                print(f"  ⚠ Method '{method_name}' has no seed data, skipping")
+                continue
+            
+            # Align and interpolate to common grid
+            grid, aligned = align_and_interpolate(seed_data, grid_step)
+            
+            if len(grid) == 0:
+                print(f"  ⚠ Method '{method_name}' has no overlapping data, skipping")
+                continue
+            
+            # Compute mean across seeds
+            mean = aligned.mean(axis=0)
+            
+            # Store for later
+            method_means[method_name] = {
+                'grid': grid,
+                'mean': mean,
+                'num_seeds': len(seed_data)
+            }
+            
+            # Update global y-limits
+            global_y_min = min(global_y_min, float(np.nanmin(mean)))
+            global_y_max = max(global_y_max, float(np.nanmax(mean)))
+    
+    if not method_means:
+        print("  ⚠ No valid methods found for grouped comparison plots")
+        return 0
+    
+    # Add some padding to y-limits (5% on each side)
+    y_range = global_y_max - global_y_min
+    global_y_min -= 0.05 * y_range
+    global_y_max += 0.05 * y_range
+    
+    print(f"\nGlobal y-axis limits: [{global_y_min:.2f}, {global_y_max:.2f}]")
+    
+    # STEP 2: Create one plot per group with shared y-limits
+    plots_created = 0
+    
+    for group in groups:
+        print(f"\nCreating grouped plot: {group['name']}")
+        
+        # Filter to methods that have data
+        available_methods = [m for m in group['methods'] if m in method_means]
+        
+        if not available_methods:
+            print(f"  ⚠ No valid methods for group '{group['name']}', skipping")
+            continue
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Plot each method in this group
+        for method_name in available_methods:
+            data = method_means[method_name]
+            grid = data['grid']
+            mean = data['mean']
+            color = group['colors'].get(method_name, '#333333')
+            
+            # Convert to thousands for x-axis
+            grid_k = grid / 1000.0
+            
+            # Plot mean line only (no CI)
+            ax.plot(grid_k, mean, label=f"{method_name} (n={data['num_seeds']})", 
+                   color=color, linewidth=3, zorder=3)
+            
+            print(f"  ✓ Added {method_name} (n={data['num_seeds']} seeds)")
+        
+        # CRITICAL: Apply global y-limits
+        ax.set_ylim(global_y_min, global_y_max)
+        
+        # Task boundaries: vertical dashed lines at 500k and 1000k
+        task_boundaries_k = [task_length * k / 1000.0 for k in range(1, num_tasks)]
+        for boundary_k in task_boundaries_k:
+            ax.axvline(boundary_k, linestyle='--', color='black', alpha=0.6, 
+                      linewidth=1.5, zorder=1)
+        
+        # Task labels: "Task 1", "Task 2", "Task 3"
+        # Position at 95% of y-range
+        label_y = global_y_min + 0.95 * (global_y_max - global_y_min)
+        
+        for k in range(num_tasks):
+            # Center of task k (0-indexed)
+            task_center_k = (k + 0.5) * task_length / 1000.0
+            ax.text(task_center_k, label_y, f'Task {k+1}', 
+                   horizontalalignment='center', verticalalignment='top',
+                   fontsize=12, fontweight='normal', alpha=0.8,
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                            edgecolor='none', alpha=0.7),
+                   zorder=4)
+        
+        # X-axis formatting: show in thousands (0, 250k, 500k, 750k, etc.)
+        from matplotlib.ticker import FuncFormatter
+        
+        def format_thousands(x, pos):
+            """Format x-axis labels as 0, 250k, 500k, etc."""
+            if x == 0:
+                return '0'
+            elif x >= 1000:
+                return f'{int(x)}k'
+            else:
+                return f'{int(x)}k'
+        
+        ax.xaxis.set_major_formatter(FuncFormatter(format_thousands))
+        
+        # Set x-limits to show full task range
+        ax.set_xlim(0, num_tasks * task_length / 1000.0)
+        
+        # Labels and title
+        ax.set_xlabel('Environment Steps (thousands)', fontsize=12)
+        ax.set_ylabel('IQM Return (avg across tasks)', fontsize=12)
+        ax.set_title(group['title'], fontsize=14, fontweight='bold')
+        
+        # Grid and legend
+        ax.grid(True, alpha=0.3, zorder=0)
+        ax.legend(fontsize=11, framealpha=0.9, loc='best')
+        
+        # Tight layout
+        plt.tight_layout()
+        
+        # Save in all requested formats
+        out_dir.mkdir(parents=True, exist_ok=True)
+        saved_paths = []
+        
+        for fmt in formats:
+            out_path = out_dir / f"{group['name']}.{fmt}"
+            fig.savefig(out_path, format=fmt, dpi=300, bbox_inches='tight')
+            saved_paths.append(str(out_path))
+        
+        plt.close(fig)
+        
+        print(f"  ✓ Saved to {', '.join(saved_paths)}")
+        plots_created += 1
+    
+    return plots_created
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Plot continual IQM return curves with 95% CI from TensorBoard logs"
@@ -1418,6 +1617,8 @@ def main():
                         help='Lambda for composite best-score: score - lambda * forgetting')
     parser.add_argument('--best_prefer_eval', action='store_true', default=False,
                         help='Prefer eval IQM when selecting best configs (if available)')
+    parser.add_argument('--grouped_comparisons', action='store_true', default=False,
+                        help='Create grouped comparison plots (Sparse, Reset-based, Baselines) with shared y-axis')
     
     args = parser.parse_args()
     
@@ -1470,50 +1671,84 @@ def main():
         print(f"Generating plots (one per method)...\n")
 
         plots_created = 0
-
+        
+        # STEP 1: First pass - compute all means to determine global y-limits
+        method_data = {}
+        global_y_min = float('inf')
+        global_y_max = float('-inf')
+        
         for method, seed_data in methods.items():
-            print(f"Processing {method}...")
-
             grid, aligned = align_and_interpolate(seed_data, args.grid_step)
-
             if len(grid) == 0:
-                print(f"  ⚠ Skipping {method}: no overlap in step ranges\n")
                 continue
-
+                
             mean, lower_ci, upper_ci = bootstrap_ci(
                 aligned,
                 n_bootstrap=args.bootstrap,
                 rng_seed=args.rng_seed
             )
+            
+            method_data[method] = {
+                'grid': grid,
+                'aligned': aligned,
+                'mean': mean,
+                'lower_ci': lower_ci,
+                'upper_ci': upper_ci,
+                'seed_data': seed_data
+            }
+            
+            # Update global y-limits (use CI bounds for full range)
+            global_y_min = min(global_y_min, float(np.nanmin(lower_ci)))
+            global_y_max = max(global_y_max, float(np.nanmax(upper_ci)))
+        
+        if not method_data:
+            print("No valid methods with overlapping data")
+            return 1
+        
+        # Add padding (5%) if not manually specified
+        if args.ymin is None or args.ymax is None:
+            y_range = global_y_max - global_y_min
+            computed_ymin = global_y_min - 0.05 * y_range
+            computed_ymax = global_y_max + 0.05 * y_range
+            final_ymin = args.ymin if args.ymin is not None else computed_ymin
+            final_ymax = args.ymax if args.ymax is not None else computed_ymax
+            print(f"\nGlobal y-axis limits for individual plots: [{final_ymin:.2f}, {final_ymax:.2f}]")
+        else:
+            final_ymin = args.ymin
+            final_ymax = args.ymax
+            print(f"\nUsing manual y-axis limits: [{final_ymin:.2f}, {final_ymax:.2f}]")
+        
+        # STEP 2: Second pass - create plots with shared y-limits
+        for method, data in method_data.items():
+            print(f"\nProcessing {method}...")
+            
+            print(f"  • {len(data['seed_data'])} seeds used")
+            print(f"  • {len(data['grid'])} grid points")
+            print(f"  • Step range: [{data['grid'].min():,}, {data['grid'].max():,}]")
 
-            print(f"  • {len(seed_data)} seeds used")
-            print(f"  • {len(grid)} grid points")
-            print(f"  • Step range: [{grid.min():,}, {grid.max():,}]")
-
-            method_dir = out_dir / method
+            method_dir = out_dir / 'individual_interventions' / method
             out_path = method_dir / f"iqm_return_ci.{formats[0]}"
 
             plot_method(
                 method_name=method,
-                seed_data=seed_data,
-                grid=grid,
-                aligned_values=aligned,
-                mean=mean,
-                lower_ci=lower_ci,
-                upper_ci=upper_ci,
+                seed_data=data['seed_data'],
+                grid=data['grid'],
+                aligned_values=data['aligned'],
+                mean=data['mean'],
+                lower_ci=data['lower_ci'],
+                upper_ci=data['upper_ci'],
                 out_path=out_path,
                 formats=formats,
                 task_length=args.task_length,
                 num_tasks_override=args.num_tasks,
-                ymin=args.ymin,
-                ymax=args.ymax,
+                ymin=final_ymin,
+                ymax=final_ymax,
                 save_data=(not args.no_save_data) and args.save_data,
                 save_aligned=args.save_aligned,
                 rng_seed=args.rng_seed
             )
 
             plots_created += 1
-            print()
     
         if args.ablation_config:
             config_path = Path(args.ablation_config)
@@ -1534,6 +1769,20 @@ def main():
                 saved = _plot_train_summary(methods, summary_config, args, out_dir, formats)
                 if saved:
                     plots_created += saved
+        
+        # Grouped comparison plots (if requested)
+        if args.grouped_comparisons:
+            print("\nCreating grouped comparison plots...")
+            saved = plot_grouped_comparisons(
+                methods,
+                out_dir / 'grouped_comparisons',
+                formats=formats,
+                task_length=args.task_length,
+                num_tasks=args.num_tasks if args.num_tasks is not None else 3,
+                grid_step=args.grid_step
+            )
+            if saved:
+                plots_created += saved
 
         if plots_created == 0:
             print("No plots created! Check your data.")

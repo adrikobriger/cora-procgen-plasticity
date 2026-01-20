@@ -1,0 +1,11 @@
+{
+  "method": "redo",
+  "search": "grid",
+  "seed": 0,
+  "candidates": [
+    {
+      "update_interval": 3000,
+      "tau": 0.03
+    }
+  ]
+}

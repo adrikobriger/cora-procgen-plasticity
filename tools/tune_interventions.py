@@ -947,19 +947,21 @@ def _run_single_seed(
     for cycle_id in range(cycle_count):
         for task_run_idx, task in enumerate(train_tasks):
             run_id = f"train_c{cycle_id}_t{task_run_idx}"
+            task_offset = total_train_timesteps
             for task_timesteps, _ in task._run(
                 task._task_spec,
                 run_id=run_id,
                 policy=policy,
                 summary_writer=writer,
                 output_dir=experiment.output_dir,
-                timestep_log_offset=total_train_timesteps,
+                timestep_log_offset=task_offset,
                 wait_to_report=False,
                 log_with_task_timestep=True,
                 reward_tag="train_reward",
                 task_timestep_start=0,
             ):
-                total_train_timesteps = max(total_train_timesteps, task_timesteps)
+                # task_timesteps is local to this task; convert to global steps using the task offset.
+                total_train_timesteps = max(total_train_timesteps, task_offset + task_timesteps)
 
             run_snapshot(cycle_id=cycle_id, task_run_idx=task_run_idx, label="post_task")
 

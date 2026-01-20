@@ -16,6 +16,7 @@ from collections import defaultdict
 from typing import Dict, List, Tuple, Optional
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from tensorboard.backend.event_processing import event_accumulator
 
 
@@ -552,6 +553,368 @@ def bootstrap_ci(
     return mean, lower_ci, upper_ci
 
 
+def _seed_step_bounds(seed_data: Dict[int, Tuple[np.ndarray, np.ndarray]]) -> Tuple[Optional[int], Optional[int]]:
+    min_steps = []
+    max_steps = []
+    for steps, _ in seed_data.values():
+        if len(steps) == 0:
+            continue
+        min_steps.append(int(steps.min()))
+        max_steps.append(int(steps.max()))
+    return (max(min_steps) if min_steps else None, min(max_steps) if max_steps else None)
+
+
+def _interpolate_seeds_to_grid(
+    seed_data: Dict[int, Tuple[np.ndarray, np.ndarray]],
+    grid: np.ndarray,
+    start: float,
+    end: float
+) -> Optional[np.ndarray]:
+    aligned = []
+    for steps, values in seed_data.values():
+        if len(steps) == 0:
+            continue
+        if steps.min() > start or steps.max() < end:
+            continue
+        aligned.append(np.interp(grid, steps, values))
+    if not aligned:
+        return None
+    return np.vstack(aligned)
+
+
+def _normalize_curve(mean: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    divisor = max(float(mean.max()), float(lower.max()), float(upper.max()), 1e-8)
+    return mean / divisor, lower / divisor, upper / divisor
+
+
+def _load_json_config(config_path: Path) -> Optional[Dict]:
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _compute_common_range(
+    methods: Dict[str, Dict[int, Tuple[np.ndarray, np.ndarray]]],
+    method_names: List[str]
+) -> Tuple[Optional[int], Optional[int]]:
+    starts = []
+    ends = []
+    for method in method_names:
+        seed_data = methods.get(method)
+        if not seed_data:
+            continue
+        lower, upper = _seed_step_bounds(seed_data)
+        if lower is None or upper is None:
+            continue
+        starts.append(lower)
+        ends.append(upper)
+    if not starts or not ends:
+        return None, None
+    return max(starts), min(ends)
+
+
+def _plot_ablation_grid(
+    methods: Dict[str, Dict[int, Tuple[np.ndarray, np.ndarray]]],
+    config: Dict,
+    args,
+    out_dir: Path,
+    formats: List[str]
+) -> int:
+    panels = config.get('panels', [])
+    if not panels:
+        print("Ablation config has no panels defined")
+        return 0
+
+    unique_methods = []
+    for panel in panels:
+        for series in panel.get('series', []):
+            method_name = series.get('method')
+            if method_name and method_name not in unique_methods:
+                unique_methods.append(method_name)
+
+    start, end = _compute_common_range(methods, unique_methods)
+    if start is None or end is None or start >= end:
+        print("Unable to compute overlapping step range for ablation figure")
+        return 0
+
+    grid_step = args.grid_step
+    grid = np.arange(start, end + grid_step, grid_step)
+    if len(grid) == 0:
+        print("Computed grid has zero points for ablation figure")
+        return 0
+
+    # Precompute mean/CI for each method in the config
+    prepared = {}
+    for method in unique_methods:
+        data = methods.get(method)
+        if not data:
+            continue
+        aligned = _interpolate_seeds_to_grid(data, grid, start, end)
+        if aligned is None:
+            continue
+        mean, lower, upper = bootstrap_ci(aligned, n_bootstrap=args.bootstrap, rng_seed=args.rng_seed)
+        if args.normalize == 'max':
+            mean, lower, upper = _normalize_curve(mean, lower, upper)
+        prepared[method] = {
+            'grid': grid,
+            'mean': mean,
+            'lower': lower,
+            'upper': upper,
+            'num_seeds': aligned.shape[0]
+        }
+
+    if not prepared:
+        print("No methods had enough data for the ablation figure")
+        return 0
+
+    num_panels = len(panels)
+    cols = min(num_panels, config.get('cols', num_panels))
+    rows = int(np.ceil(num_panels / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows), squeeze=False)
+    axes_flat = axes.flatten()
+
+    default_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    legend_handles = []
+    legend_labels = []
+
+    x_scale = args.steps_per_epoch if args.steps_per_epoch > 0 else 1
+    common_xlabel = config.get('x_label', 'Epoch' if x_scale != 1 else 'Environment steps')
+    common_ylabel = config.get('y_label', 'Normalized IQM' if args.normalize == 'max' else 'Eval IQM return (avg across tasks)')
+
+    for panel_idx, panel in enumerate(panels):
+        ax = axes_flat[panel_idx]
+        panel_title = panel.get('title', f'Panel {panel_idx+1}')
+        series_style_cycle = iter(default_colors)
+        panel_x_values = None
+        for series in panel.get('series', []):
+            method_name = series.get('method')
+            label = series.get('label') or method_name
+            color = series.get('color')
+            if not color:
+                color = next(series_style_cycle, None)
+            prepared_series = prepared.get(method_name)
+            if not prepared_series:
+                print(f"  ⚠ Missing data for '{method_name}' (panel '{panel_title}')")
+                continue
+            x_values = prepared_series['grid'] / x_scale
+            mean = prepared_series['mean']
+            lower = prepared_series['lower']
+            upper = prepared_series['upper']
+
+            ax.plot(x_values, mean, label=label, color=color, linewidth=2.5)
+            if args.bootstrap > 0 and prepared_series['num_seeds'] > 1:
+                ax.fill_between(x_values, lower, upper, color=color, alpha=0.25)
+
+            if panel_idx == 0 and label not in legend_labels:
+                legend_handles.append(Line2D([], [], color=color, linewidth=2.5))
+                legend_labels.append(label)
+            panel_x_values = x_values
+
+        ax.set_title(panel_title, fontsize=12, fontweight='semibold')
+        ax.set_xlabel(common_xlabel)
+        ax.set_ylabel(common_ylabel if panel_idx % cols == 0 else '')
+        ax.grid(True, alpha=0.3)
+        if panel_x_values is not None:
+            ax.set_xlim(panel_x_values.min(), panel_x_values.max())
+        panel_ylim = panel.get('ylim')
+        if panel_ylim and len(panel_ylim) == 2:
+            ax.set_ylim(panel_ylim[0], panel_ylim[1])
+
+    # Turn off unused subplots
+    for unused in axes_flat[num_panels:]:
+        unused.axis('off')
+
+    if legend_handles:
+        fig.legend(legend_handles, legend_labels, loc='upper center', ncol=len(legend_handles), borderaxespad=0.5)
+        fig.subplots_adjust(top=0.88)
+
+    fig.suptitle(config.get('figure_title', 'IQM Return Ablation'), fontsize=14, fontweight='bold')
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
+
+    out_path = out_dir / args.ablation_plot_name
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    saved = 0
+    for fmt in formats:
+        fmt_path = out_path.with_suffix(f'.{fmt}')
+        fig.savefig(fmt_path, format=fmt, dpi=300, bbox_inches='tight')
+        saved += 1
+
+    plt.close(fig)
+    print(f"  ✓ Saved ablation figure to {out_path.with_suffix('.' + formats[0])} (plus {saved-1} more)")
+    return saved
+
+
+def _plot_train_summary(
+    methods: Dict[str, Dict[int, Tuple[np.ndarray, np.ndarray]]],
+    config: Dict,
+    args,
+    out_dir: Path,
+    formats: List[str]
+) -> int:
+    """
+    Plot a single train IQM curve that overlays each intervention and highlights the best one.
+    """
+    series = config.get('series', [])
+    if not series:
+        print("Summary config is empty or missing the 'series' list")
+        return 0
+
+    method_names = [entry.get('method') for entry in series if entry.get('method')]
+    if not method_names:
+        print("Summary config does not specify any method names")
+        return 0
+
+    start, end = _compute_common_range(methods, method_names)
+    if start is None or end is None or start >= end:
+        print("Unable to compute overlapping step range for the train summary figure")
+        return 0
+
+    grid_step = args.grid_step
+    grid = np.arange(start, end + grid_step, grid_step)
+    if len(grid) == 0:
+        print("Computed grid has zero points for the train summary figure")
+        return 0
+
+    prepared = {}
+    default_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    color_iter = iter(default_colors)
+
+    for entry in series:
+        method = entry.get('method')
+        if not method:
+            continue
+        seed_data = methods.get(method)
+        if not seed_data:
+            continue
+        aligned = _interpolate_seeds_to_grid(seed_data, grid, start, end)
+        if aligned is None:
+            continue
+        mean = aligned.mean(axis=0)
+        color = entry.get('color')
+        prepared[method] = {
+            'grid': grid,
+            'mean': mean,
+            'aligned': aligned,
+            'label': entry.get('label', method),
+            'details': entry.get('details', ''),
+            'color': color,
+            'line_style': entry.get('line_style', '-'),
+            'intervention': entry.get('intervention') or method,
+            'num_seeds': aligned.shape[0],
+        }
+
+    if not prepared:
+        print("No methods had enough data for the train summary figure")
+        return 0
+
+    # Determine best-performing method (highest final value)
+    best_method = max(prepared.items(), key=lambda kv: kv[1]['mean'][-1])[0]
+    best_entry = prepared[best_method]
+    if best_entry['num_seeds'] > 0:
+        mean, lower_ci, upper_ci = bootstrap_ci(
+            best_entry['aligned'],
+            n_bootstrap=args.bootstrap,
+            rng_seed=args.rng_seed
+        )
+        best_entry['mean'] = mean
+        best_entry['lower'] = lower_ci
+        best_entry['upper'] = upper_ci
+    best_entry['is_best'] = True
+
+    # Plotting
+    figsize = tuple(config.get('figsize', (12, 6)))
+    fig, ax = plt.subplots(figsize=figsize)
+    global_x_min = float('inf')
+    global_x_max = float('-inf')
+    color_cycle = iter(default_colors)
+    x_scale = args.steps_per_epoch if args.steps_per_epoch > 0 else 1
+    x_label = config.get('x_label', 'Epoch' if x_scale != 1 else 'Environment steps')
+    y_label = config.get('y_label', 'Eval IQM return (avg across tasks)')
+
+    for entry in series:
+        method = entry.get('method')
+        plot_entry = prepared.get(method)
+        if not plot_entry:
+            continue
+        color = plot_entry['color'] or next(color_cycle, '#333333')
+        x_values = plot_entry['grid'] / x_scale
+        label = plot_entry['label']
+        if plot_entry['details']:
+            label = f"{label} ({plot_entry['details']})"
+        if plot_entry.get('is_best'):
+            label = f"{label} (best)"
+        ax.plot(x_values, plot_entry['mean'], label=label, color=color,
+                linewidth=3 if plot_entry.get('is_best') else 2,
+                linestyle=plot_entry.get('line_style', '-'), zorder=3)
+
+        if plot_entry.get('is_best') and 'lower' in plot_entry and 'upper' in plot_entry:
+            ax.fill_between(x_values, plot_entry['lower'], plot_entry['upper'],
+                            color=color, alpha=0.25, zorder=2)
+
+        global_x_min = min(global_x_min, float(x_values.min()))
+        global_x_max = max(global_x_max, float(x_values.max()))
+
+    if global_x_min == float('inf') or global_x_max == float('-inf'):
+        print("Train summary figure has no plotted range")
+        plt.close(fig)
+        return 0
+
+    ax.set_xlabel(x_label, fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
+    ax.set_title(config.get('title', 'Train IQM Return Across Interventions'), fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    # If the user forces a known number of tasks, extend the visible x-range *before*
+    # drawing task-region labels. Otherwise Task N won't be labeled if the data ends early.
+    x_right = global_x_max
+    if args.num_tasks is not None and args.task_length > 0:
+        expected_xmax = (int(args.num_tasks) * args.task_length) / x_scale
+        if expected_xmax > x_right:
+            x_right = expected_xmax
+
+    ax.set_xlim(global_x_min, x_right)
+    ax.legend(fontsize=10, framealpha=0.9)
+
+    # Annotate task boundaries and label each task region (Task 1..N)
+    # Use the *visible* range for task annotations.
+    _, visible_x_max = ax.get_xlim()
+    x_max_steps = visible_x_max * x_scale
+    if args.task_length > 0:
+        num_tasks = int(args.num_tasks) if args.num_tasks is not None else int(np.ceil(x_max_steps / args.task_length))
+
+        # Boundaries at task transitions (include end boundary if it lands on x_max)
+        for k in range(1, num_tasks + 1):
+            boundary_steps = k * args.task_length
+            boundary = boundary_steps / x_scale
+            if global_x_min < boundary <= global_x_max:
+                ax.axvline(boundary, linestyle='--', color='black', alpha=0.5, linewidth=1.2, zorder=1)
+
+        # Labels at task centers
+        y_min, y_max = ax.get_ylim()
+        label_y = y_min + 0.95 * (y_max - y_min)
+        for k in range(num_tasks):
+            center_steps = (k + 0.5) * args.task_length
+            center = center_steps / x_scale
+            if global_x_min < center < global_x_max:
+                ax.text(center, label_y, f'Task {k+1}', ha='center', va='top', fontsize=11,
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='none', alpha=0.7))
+
+        # x-axis already extended above when forcing num_tasks
+
+    plt.tight_layout()
+
+    out_path = out_dir / args.summary_plot_name
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    for fmt in formats:
+        fmt_path = out_path.with_suffix(f'.{fmt}')
+        fig.savefig(fmt_path, format=fmt, dpi=300, bbox_inches='tight')
+
+    plt.close(fig)
+    print(f"  ✓ Saved train summary figure to {out_path.with_suffix('.' + formats[0])} (plus {len(formats)-1} more)")
+    return len(formats)
+
+
 def format_step_tick(x, pos):
     """Format tick labels as 100k, 200k, etc."""
     return f'{int(x/1000)}k'
@@ -568,6 +931,7 @@ def plot_method(
     out_path: Path,
     formats: List[str] = ['png'],
     task_length: int = 500_000,
+    num_tasks_override: Optional[int] = None,
     ymin: Optional[float] = None,
     ymax: Optional[float] = None,
     save_data: bool = True,
@@ -620,12 +984,22 @@ def plot_method(
     y_min, y_max = ax.get_ylim()
     
     # Calculate number of tasks
-    num_tasks = int(np.ceil(x_max / task_length))
-    
-    # Draw vertical lines at task boundaries
-    for k in range(1, num_tasks):
+    num_tasks = int(num_tasks_override) if num_tasks_override is not None else int(np.ceil(x_max / task_length))
+
+    # If the user forces a known task count, extend the visible x-range *before*
+    # drawing task-region labels. Otherwise Task N won't be labeled if the data ends early.
+    x_max_visible = x_max
+    if num_tasks_override is not None and task_length > 0:
+        expected_xmax = num_tasks * task_length
+        if expected_xmax > x_max_visible:
+            x_max_visible = expected_xmax
+
+    ax.set_xlim(x_min, x_max_visible)
+
+    # Draw vertical lines at task boundaries (include end boundary if it lands on x_max)
+    for k in range(1, num_tasks + 1):
         boundary = k * task_length
-        if x_min < boundary < x_max:
+        if x_min < boundary <= x_max_visible:
             ax.axvline(boundary, linestyle='--', color='black', alpha=0.6, linewidth=1.5, zorder=4)
     
     # Add task labels
@@ -637,7 +1011,7 @@ def plot_method(
         task_center = (k + 0.5) * task_length
         
         # Only label if center is within visible range
-        if x_min < task_center < x_max:
+        if x_min < task_center < x_max_visible:
             ax.text(task_center, label_y, f'Task {k+1}', 
                    horizontalalignment='center', verticalalignment='top',
                    fontsize=12, fontweight='normal', alpha=0.8,
@@ -656,8 +1030,7 @@ def plot_method(
     ax.legend(fontsize=10, framealpha=0.9)
     ax.grid(True, alpha=0.3)
     
-    # Set x-limits to the computed overlap range
-    ax.set_xlim(grid.min(), grid.max())
+    # x-limits already set above (and extended if num_tasks_override was provided)
     
     # Set y-limits if specified
     if ymin is not None or ymax is not None:
@@ -722,7 +1095,7 @@ def main():
                         help='Directory containing run folders')
     parser.add_argument('--out_dir', type=str, default='plots',
                         help='Output directory for plots')
-    parser.add_argument('--tag_prefix', type=str, default='eval_reward_iqm/',
+    parser.add_argument('--tag_prefix', type=str, default='train_reward_iqm/',
                         help='TensorBoard scalar tag prefix')
     parser.add_argument('--grid_step', type=int, default=50000,
                         help='Common x-grid spacing in environment steps')
@@ -740,6 +1113,8 @@ def main():
                         help='Random seed for bootstrap')
     parser.add_argument('--task_length', type=int, default=500000,
                         help='Length of each task in environment steps (for task boundary lines)')
+    parser.add_argument('--num_tasks', type=int, default=None,
+                        help='Optional override for number of tasks (forces boundary/label placement to num_tasks * task_length)')
     parser.add_argument('--ymin', type=float, default=None,
                         help='Minimum y-axis value (for consistent scaling across methods)')
     parser.add_argument('--ymax', type=float, default=None,
@@ -750,6 +1125,18 @@ def main():
                         help='Disable saving processed data')
     parser.add_argument('--save_aligned', action='store_true', default=False,
                         help='Also save aligned per-seed values as NPZ (larger)')
+    parser.add_argument('--ablation_config', type=str, default=None,
+                        help='JSON spec for a multi-panel ablation figure (optional)')
+    parser.add_argument('--ablation_plot_name', type=str, default='iqm_ablation',
+                        help='Base filename for the combined ablation figure')
+    parser.add_argument('--summary_config', type=str, default=None,
+                        help='JSON spec for the single-trace train IQM summary figure')
+    parser.add_argument('--summary_plot_name', type=str, default='train_iqm_summary',
+                        help='Base filename for the summary figure across all interventions')
+    parser.add_argument('--normalize', choices=['none', 'max'], default='none',
+                        help='Normalization mode for ablation lines (max scales each curve to [0,1])')
+    parser.add_argument('--steps_per_epoch', type=int, default=1,
+                        help='Divide x-axis steps by this value when drawing the ablation figure (use >1 to show epochs)')
     
     args = parser.parse_args()
     
@@ -833,6 +1220,7 @@ def main():
             out_path=out_path,
             formats=formats,
             task_length=args.task_length,
+            num_tasks_override=args.num_tasks,
             ymin=args.ymin,
             ymax=args.ymax,
             save_data=(not args.no_save_data) and args.save_data,
@@ -843,6 +1231,26 @@ def main():
         plots_created += 1
         print()
     
+    if args.ablation_config:
+        config_path = Path(args.ablation_config)
+        config = _load_json_config(config_path)
+        if config is None:
+            print(f"Error: cannot read ablation config '{config_path}'")
+        else:
+            saved = _plot_ablation_grid(methods, config, args, out_dir, formats)
+            if saved:
+                plots_created += 1
+
+    if args.summary_config:
+        summary_path = Path(args.summary_config)
+        summary_config = _load_json_config(summary_path)
+        if summary_config is None:
+            print(f"Error: cannot read summary config '{summary_path}'")
+        else:
+            saved = _plot_train_summary(methods, summary_config, args, out_dir, formats)
+            if saved:
+                plots_created += saved
+
     if plots_created == 0:
         print("No plots created! Check your data.")
         return 1

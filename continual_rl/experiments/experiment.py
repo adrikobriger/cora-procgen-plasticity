@@ -3,6 +3,8 @@ import json
 import numbers
 import numpy as np
 import torch
+import torch.nn as nn
+
 from continual_rl.experiments.run_metadata import RunMetadata
 from continual_rl.utils.utils import Utils
 from continual_rl.utils.common_exceptions import OutputDirectoryNotSetException
@@ -14,24 +16,36 @@ class InvalidTaskAttributeException(Exception):
 
 
 class Experiment(object):
+    """
+    Experiment runner with continual evaluation, forgetting metrics, and optional plasticity diagnostics
+    via activation effective-rank.
+    """
+
+    # ---------------------------------------------------------------------
+    # Effective-rank configuration (activation-based)
+    # ---------------------------------------------------------------------
+    # NOTE:
+    # - "features" is captured via a forward-hook (module OUTPUT).
+    # - "actor_in" and "critic_in" are captured via forward PRE-hooks (module INPUTS).
+    # - Patterns are substring matches on model.named_modules() keys.
+    EFFECTIVE_RANK_LAYER_PATTERNS = {
+        "features": ["base.main"],
+        "actor_in": ["base.actor"],
+        "critic_in": ["base.critic"],
+    }
+
+    MAX_EFFECTIVE_RANK_BATCHES = 10
+    MAX_EFFECTIVE_RANK_ROWS = 512
+
+    # Guardrail: if activation dim is huge, project down before SVD
+    MAX_EFFECTIVE_RANK_COLS = 4096
+    EFFECTIVE_RANK_PROJ_DIM = 1024
+    EFFECTIVE_RANK_PROJ_SEED = 0
+
+    # Whether to center activations (recommended for stability/comparability)
+    EFFECTIVE_RANK_CENTER = True
+
     def __init__(self, tasks, continual_testing_freq=None, cycle_count=1):
-        """
-        The Experiment class contains everything that should be held consistent when the experiment is used as a
-        setting for a baseline.
-
-        A single experiment can cover tasks with a variety of action spaces. It is up to the policy on how they wish
-        to handle this, but what the Experiment does is create a dictionary mapping action_space_id to action space, and
-        ensures that all tasks claiming the same id use the same action space.
-
-        The observation space and time batch sizes are both restricted to being the same for all tasks. This
-        initialization will assert if this is violated.
-
-        :param tasks: A list of subclasses of TaskBase. These need to have a consistent observation space.
-        :param output_dir: The directory in which logs will be stored.
-        :param continual_testing_freq: The number of timesteps between evaluation steps on the not-currently-training
-        tasks.
-        :param cycle count: The number of times to cycle through the list of tasks.
-        """
         self.tasks = tasks
         self.action_spaces = self._get_action_spaces(self.tasks)
         self.observation_space = self._get_common_attribute(
@@ -43,245 +57,440 @@ class Experiment(object):
         self._cycle_count = cycle_count
         self._core_logger = None
 
-        # ADDED: tracking continual-eval returns for forgetting metrics
-        self._eval_last_return = {}
+        # Continual-eval returns used for forgetting metrics
+        self._eval_last_return_mean = {}
         self._eval_last_return_iqm = {}
-        self._ref_return_end_of_task = {}
+        self._ref_return_end_of_task_mean = {}
+        self._ref_return_end_of_task_iqm = {}
 
-        # ADDED: tracking effective rank metrics
-        self._effective_rank_history = []  # List of (timestep, layer_name, effective_rank) tuples
-        self._effective_rank_by_layer = {}  # Most recent effective rank per layer
+        # Effective-rank tracking
+        self._effective_rank_history = []          # list of (timestep, layer_key, eff_rank)
+        self._effective_rank_by_layer = {}         # latest per-layer_key
+        self._activation_buffers = {}              # layer_key -> list[np.ndarray]  (2D)
+        self._activation_rows_total = {}           # layer_key -> rows cached
 
+        # Hook management
+        self._rank_layer_modules = {}              # layer_key -> (module_name, module)
+        self._rank_hook_handles = []               # forward hooks
+        self._rank_prehook_handles = []            # forward pre-hooks
+        self._rank_hook_model_id = None
+        self._rank_layers_logged = False
+
+        # Projection cache to avoid rebuilding matrices every eval checkpoint
+        self._proj_cache = {}                      # (in_dim, proj_dim, seed) -> proj_matrix
+
+        # Temporary: last aggregate stats for the most recent compute call
+        self._last_effective_rank_stats = None
+
+    # ---------------------------------------------------------------------
+    # Output directory and logging
+    # ---------------------------------------------------------------------
     def set_output_dir(self, output_dir):
         self._output_dir = output_dir
 
     @property
     def output_dir(self):
         if self._output_dir is None:
-            raise OutputDirectoryNotSetException("Output directory not set, but is attempting to be used. Call set_output_dir.")
+            raise OutputDirectoryNotSetException(
+                "Output directory not set, but is attempting to be used. Call set_output_dir."
+            )
         return self._output_dir
 
     @property
     def _logger(self):
         return Utils.create_logger(f"{self.output_dir}/core_process.log")
-    
-    # ADDED: Trying to clean up loggers and terminal output
+
     def _console(self, msg: str) -> None:
-        # clean human-readable terminal output (no timestamps, no logger prefixes)
         print(msg, flush=True)
 
-    # ADDED: Effective rank computation for plasticity metrics
+    # ---------------------------------------------------------------------
+    # Effective-rank utilities
+    # ---------------------------------------------------------------------
     @staticmethod
     def _compute_effective_rank_from_matrix(matrix: np.ndarray, epsilon: float = 1e-10) -> float:
         """
-        Compute the effective rank of a matrix using the entropy-based formula.
-        
-        Effective rank = exp(H) where H is the entropy of normalized singular values.
-        H = -sum(p_i * log(p_i)) where p_i = sigma_i / sum(sigma_j)
-        
-        This measures the "effective dimensionality" of the matrix.
-        A higher effective rank indicates more distributed singular values (more "plastic").
-        A lower effective rank indicates more concentrated singular values (potential plasticity loss).
-        
-        :param matrix: 2D numpy array (weight matrix)
-        :param epsilon: Small value to avoid log(0)
-        :return: Effective rank (float between 1 and min(rows, cols))
+        Effective rank via entropy of normalized singular-value energy:
+
+            p_i = sigma_i^2 / sum_j sigma_j^2
+            H   = -sum_i p_i log(p_i)
+            er  = exp(H)
+
+        Returns:
+            float or None (if matrix is degenerate/unusable)
         """
+        if matrix is None or not isinstance(matrix, np.ndarray):
+            return None
         if matrix.ndim != 2:
             return None
-        
-        # Compute singular values
+        if matrix.shape[0] < 2 or matrix.shape[1] < 2:
+            return None
+
         try:
-            singular_values = np.linalg.svd(matrix, compute_uv=False)
+            s = np.linalg.svd(matrix, compute_uv=False)
         except np.linalg.LinAlgError:
             return None
-        
-        # Filter out near-zero singular values
-        singular_values = singular_values[singular_values > epsilon]
-        
-        if len(singular_values) == 0:
+
+        s = s[s > epsilon]
+        if s.size == 0:
             return 0.0
-        
-        # Normalize to get probability distribution
-        total = np.sum(singular_values)
+
+        energy = s * s
+        total = float(np.sum(energy))
         if total < epsilon:
             return 0.0
-        
-        p = singular_values / total
-        
-        # Compute entropy: H = -sum(p_i * log(p_i))
-        # Use natural log for standard entropy
-        entropy = -np.sum(p * np.log(p + epsilon))
-        
-        # Effective rank = exp(H)
-        effective_rank = np.exp(entropy)
-        
-        return float(effective_rank)
 
-    def _compute_effective_rank(self, policy, total_timesteps: int, summary_writer) -> dict:
+        p = energy / total
+        entropy = -float(np.sum(p * np.log(p + epsilon)))
+        return float(np.exp(entropy))
+
+    def _get_or_make_projection(self, in_dim: int) -> np.ndarray:
+        key = (int(in_dim), int(self.EFFECTIVE_RANK_PROJ_DIM), int(self.EFFECTIVE_RANK_PROJ_SEED))
+        proj = self._proj_cache.get(key, None)
+        if proj is None:
+            rng = np.random.default_rng(self.EFFECTIVE_RANK_PROJ_SEED)
+            proj = rng.normal(size=(in_dim, self.EFFECTIVE_RANK_PROJ_DIM)).astype(np.float32)
+            self._proj_cache[key] = proj
+        return proj
+
+    def _select_rank_layers(self, model):
         """
-        Compute effective rank for all applicable weight matrices in the policy's model.
-        Effective rank measures the "effective dimensionality" of weight matrices and is used
-        to track plasticity loss in continual learning.
-        
-        :param policy: The policy object containing the neural network
-        :param total_timesteps: Current total timesteps (for logging)
-        :param summary_writer: Tensorboard summary writer
-        :return: Dictionary mapping layer names to their effective ranks
+        Best-effort module selection based on EFFECTIVE_RANK_LAYER_PATTERNS.
+        We prefer "features" first, then try actor/critic inputs, ensuring we do not reuse the same module.
         """
-        effective_ranks = {}
-        
-        # Try to access the model from the policy - handle different policy types
-        model = None
-        
-        # PPO and other single-model policies
-        if hasattr(policy, '_actor_critic') and policy._actor_critic is not None:
-            model = policy._actor_critic
-        
-        # Impala and other trainer-based policies
-        elif hasattr(policy, 'impala_trainer'):
-            trainer = policy.impala_trainer
-            # Try learner_model first (on device, actively used for training)
-            if hasattr(trainer, 'learner_model') and trainer.learner_model is not None:
-                model = trainer.learner_model
-            elif hasattr(trainer, 'actor_model') and trainer.actor_model is not None:
-                model = trainer.actor_model
-        
-        # Fallback: try common attribute names
+        selected = {}
+        try:
+            named_modules = list(model.named_modules()) if hasattr(model, "named_modules") else []
+            if not named_modules:
+                return {}
+
+            used = set()
+
+            # 1) features (preferred)
+            for pattern in self.EFFECTIVE_RANK_LAYER_PATTERNS.get("features", []):
+                for name, module in named_modules:
+                    if pattern in name:
+                        selected["features"] = (name, module)
+                        used.add(module)
+                        break
+                if "features" in selected:
+                    break
+
+            # 2) actor_in / critic_in (optional)
+            for key in ("actor_in", "critic_in"):
+                for pattern in self.EFFECTIVE_RANK_LAYER_PATTERNS.get(key, []):
+                    for name, module in named_modules:
+                        if pattern in name and module not in used:
+                            selected[key] = (name, module)
+                            used.add(module)
+                            break
+                    if key in selected:
+                        break
+
+        except Exception:
+            return {}
+
+        if not selected:
+            self._logger.warning("Effective-rank: no modules matched patterns; skipping activation capture.")
+        return selected
+
+    def _activation_to_matrix(self, tensor) -> torch.Tensor:
+        """
+        Convert a model tensor (input or output) to a 2D tensor [N, D] suitable for SVD.
+        """
+        if tensor is None:
+            return None
+
+        # Handle tuples/lists produced by some modules
+        if isinstance(tensor, (tuple, list)) and tensor:
+            tensor = tensor[0]
+
+        if not torch.is_tensor(tensor):
+            return None
+
+        act = tensor.detach()
+
+        # Common RL shapes:
+        #  [B, C, H, W] -> [B, C*H*W]
+        #  [T, B, D]    -> [T*B, D]
+        #  [B, D]       -> [B, D]
+        #  [D]          -> [1, D]
+        if act.dim() == 4:
+            act = act.reshape(act.size(0), -1)
+        elif act.dim() == 3:
+            act = act.reshape(-1, act.size(-1))
+        elif act.dim() == 2:
+            pass
+        elif act.dim() == 1:
+            act = act.view(1, -1)
+        else:
+            act = act.reshape(act.size(0), -1) if act.dim() > 1 else act.view(1, -1)
+
+        return act
+
+    def _collect_activation(self, layer_key: str, tensor) -> None:
+        """
+        Collect up to MAX_EFFECTIVE_RANK_BATCHES and MAX_EFFECTIVE_RANK_ROWS rows total.
+        """
+        try:
+            if layer_key not in self._activation_buffers:
+                self._activation_buffers[layer_key] = []
+                self._activation_rows_total[layer_key] = 0
+
+            if len(self._activation_buffers[layer_key]) >= self.MAX_EFFECTIVE_RANK_BATCHES:
+                return
+
+            act = self._activation_to_matrix(tensor)
+            if act is None:
+                return
+
+            rows_left = self.MAX_EFFECTIVE_RANK_ROWS - self._activation_rows_total[layer_key]
+            if rows_left <= 0:
+                return
+
+            if act.size(0) > rows_left:
+                act = act[:rows_left]
+
+            self._activation_buffers[layer_key].append(act.cpu().float().numpy())
+            self._activation_rows_total[layer_key] += int(act.size(0))
+        except Exception:
+            # best-effort metrics; never break training/eval
+            return
+
+    def _reset_rank_buffers(self) -> None:
+        self._activation_buffers = {}
+        self._activation_rows_total = {}
+
+    def _install_rank_hooks(self, model) -> None:
+        """
+        Installs hooks once per model instance:
+          - forward-hook for "features" (module output)
+          - forward PRE-hook for actor_in / critic_in (module input)
+        """
         if model is None:
-            model_attr_names = ['model', 'network', 'actor_critic', 'net', 'policy_net', 'q_network', 'actor', 'actor_net']
+            return
+
+        model_id = id(model)
+        if self._rank_hook_model_id == model_id and (self._rank_hook_handles or self._rank_prehook_handles):
+            return
+
+        # Remove old hooks
+        for h in self._rank_hook_handles:
+            try:
+                h.remove()
+            except Exception:
+                pass
+        for h in self._rank_prehook_handles:
+            try:
+                h.remove()
+            except Exception:
+                pass
+
+        self._rank_hook_handles = []
+        self._rank_prehook_handles = []
+        self._rank_hook_model_id = model_id
+        self._rank_layers_logged = False
+
+        self._rank_layer_modules = self._select_rank_layers(model)
+        if not self._rank_layer_modules:
+            return
+
+        # Install hooks per layer_key
+        for layer_key, (name, module) in self._rank_layer_modules.items():
+            try:
+                if layer_key == "features":
+                    # forward hook captures OUTPUT of module
+                    def _fwd_hook(_module, _inp, out, _lk=layer_key):
+                        self._collect_activation(_lk, out)
+
+                    self._rank_hook_handles.append(module.register_forward_hook(_fwd_hook))
+                else:
+                    # pre-hook captures INPUTS to module (actor_in/critic_in)
+                    def _pre_hook(_module, inputs, _lk=layer_key):
+                        if isinstance(inputs, (tuple, list)) and inputs:
+                            self._collect_activation(_lk, inputs[0])
+                        else:
+                            self._collect_activation(_lk, inputs)
+
+                    self._rank_prehook_handles.append(module.register_forward_pre_hook(_pre_hook))
+            except Exception:
+                continue
+
+        if not self._rank_layers_logged:
+            matched = {k: v[0] for k, v in self._rank_layer_modules.items()}
+            missing = [k for k in self.EFFECTIVE_RANK_LAYER_PATTERNS.keys() if k not in matched]
+            self._logger.info(f"Effective-rank layer matches: {matched}")
+            if missing:
+                self._logger.info(f"Effective-rank missing layer keys: {missing}")
+            if list(matched.keys()) == ["features"]:
+                self._logger.warning("Effective-rank: only 'features' matched (actor/critic not found).")
+            self._rank_layers_logged = True
+
+    def _get_policy_model(self, policy):
+        model = None
+
+        if hasattr(policy, "_actor_critic") and policy._actor_critic is not None:
+            model = policy._actor_critic
+        elif hasattr(policy, "impala_trainer"):
+            trainer = policy.impala_trainer
+            if hasattr(trainer, "learner_model") and trainer.learner_model is not None:
+                model = trainer.learner_model
+            elif hasattr(trainer, "actor_model") and trainer.actor_model is not None:
+                model = trainer.actor_model
+
+        if model is None:
+            model_attr_names = [
+                "model", "network", "actor_critic", "net", "policy_net",
+                "q_network", "actor", "actor_net"
+            ]
             for attr_name in model_attr_names:
                 if hasattr(policy, attr_name):
                     attr = getattr(policy, attr_name)
                     if attr is not None:
                         model = attr
                         break
-        
+
+        return model
+
+    def _compute_effective_rank(
+        self,
+        policy,
+        total_timesteps: int,
+        summary_writer,
+        log_prefix: str = "effective_rank",
+        do_log: bool = True,
+    ) -> dict:
+        """
+        Compute activation effective-rank for the activations collected during the most recent eval run.
+        """
+        effective_ranks = {}
+        self._last_effective_rank_stats = None
+
+        model = self._get_policy_model(policy)
         if model is None:
             return effective_ranks
-        
-        # Iterate through named parameters and compute effective rank for weight matrices
+
         try:
-            named_params = list(model.named_parameters()) if hasattr(model, 'named_parameters') else []
-            
-            if not named_params:
+            self._install_rank_hooks(model)
+
+            if not self._activation_buffers:
                 return effective_ranks
-            
+
             layer_ranks = []
-            
-            for name, param in named_params:
-                # Only compute for 2D weight matrices (skip biases, embeddings, etc.)
-                if param.dim() == 2 and 'weight' in name.lower():
-                    weight_matrix = param.detach().cpu().numpy()
-                    eff_rank = self._compute_effective_rank_from_matrix(weight_matrix)
-                    
-                    if eff_rank is not None:
-                        effective_ranks[name] = eff_rank
-                        layer_ranks.append(eff_rank)
-                        self._effective_rank_history.append((total_timesteps, name, eff_rank))
-                
-                # Also handle Conv2d layers by reshaping to 2D
-                elif param.dim() == 4 and 'weight' in name.lower():
-                    # Conv weights are (out_channels, in_channels, H, W)
-                    # Reshape to (out_channels, in_channels * H * W)
-                    weight = param.detach().cpu().numpy()
-                    out_ch = weight.shape[0]
-                    reshaped = weight.reshape(out_ch, -1)
-                    eff_rank = self._compute_effective_rank_from_matrix(reshaped)
-                    
-                    if eff_rank is not None:
-                        effective_ranks[name] = eff_rank
-                        layer_ranks.append(eff_rank)
-                        self._effective_rank_history.append((total_timesteps, name, eff_rank))
-            
-            # Log only aggregate statistics
+            for layer_key, buffers in self._activation_buffers.items():
+                if not buffers:
+                    continue
+
+                try:
+                    X = np.concatenate(buffers, axis=0).astype(np.float32, copy=False)
+                except Exception:
+                    continue
+
+                # Optional centering improves stability
+                if self.EFFECTIVE_RANK_CENTER and X.shape[0] >= 2:
+                    X = X - X.mean(axis=0, keepdims=True)
+
+                # Projection guardrail for extremely wide matrices
+                if X.shape[1] > self.MAX_EFFECTIVE_RANK_COLS:
+                    proj = self._get_or_make_projection(X.shape[1])
+                    try:
+                        X = X @ proj
+                    except Exception:
+                        continue
+
+                if X.shape[0] < 2 or X.shape[1] < 2:
+                    continue
+
+                eff_rank = self._compute_effective_rank_from_matrix(X)
+                if eff_rank is None:
+                    continue
+
+                effective_ranks[layer_key] = eff_rank
+                layer_ranks.append(eff_rank)
+                self._effective_rank_history.append((total_timesteps, layer_key, eff_rank))
+
+                if do_log and log_prefix:
+                    summary_writer.add_scalar(
+                        f"{log_prefix}/layer/{layer_key}",
+                        eff_rank,
+                        global_step=total_timesteps,
+                    )
+
             if layer_ranks:
                 avg_rank = float(np.mean(layer_ranks))
                 min_rank = float(np.min(layer_ranks))
                 max_rank = float(np.max(layer_ranks))
-                
-                summary_writer.add_scalar("effective_rank/avg", avg_rank, global_step=total_timesteps)
-                summary_writer.add_scalar("effective_rank/min", min_rank, global_step=total_timesteps)
-                summary_writer.add_scalar("effective_rank/max", max_rank, global_step=total_timesteps)
-                summary_writer.flush()
-            
+                self._last_effective_rank_stats = {"avg": avg_rank, "min": min_rank, "max": max_rank}
+
+                if do_log and log_prefix:
+                    summary_writer.add_scalar(f"{log_prefix}/layers_avg", avg_rank, global_step=total_timesteps)
+                    summary_writer.add_scalar(f"{log_prefix}/layers_min", min_rank, global_step=total_timesteps)
+                    summary_writer.add_scalar(f"{log_prefix}/layers_max", max_rank, global_step=total_timesteps)
+                    summary_writer.flush()
+
         except Exception as e:
             self._logger.warning(f"Error computing effective rank: {e}")
-        
-        # Update most recent values
+
         self._effective_rank_by_layer = effective_ranks
-        
         return effective_ranks
 
     def get_effective_rank_history(self) -> list:
-        """
-        Get the full history of effective rank measurements.
-        
-        :return: List of (timestep, layer_name, effective_rank) tuples
-        """
         return self._effective_rank_history.copy()
 
     def get_current_effective_ranks(self) -> dict:
-        """
-        Get the most recent effective rank values per layer.
-        
-        :return: Dictionary mapping layer names to effective rank values
-        """
         return self._effective_rank_by_layer.copy()
 
     def save_effective_rank_history(self, filepath: str = None) -> str:
-        """
-        Save effective rank history to a JSON file.
-        
-        :param filepath: Path to save the file. If None, saves to output_dir/effective_rank_history.json
-        :return: The filepath where data was saved
-        """
         if filepath is None:
             filepath = os.path.join(self.output_dir, "effective_rank_history.json")
-        
-        # Convert history to a more structured format for JSON
+
         history_data = {
             "measurements": [
                 {"timestep": t, "layer": layer, "effective_rank": rank}
                 for t, layer, rank in self._effective_rank_history
             ],
-            "latest_by_layer": self._effective_rank_by_layer
+            "latest_by_layer": self._effective_rank_by_layer,
         }
-        
-        with open(filepath, 'w') as f:
+
+        with open(filepath, "w") as f:
             json.dump(history_data, f, indent=2)
-        
+
         self._logger.info(f"Saved effective rank history to {filepath}")
         return filepath
 
+    # ---------------------------------------------------------------------
+    # Task attribute helpers
+    # ---------------------------------------------------------------------
     @classmethod
-    def _get_action_spaces(self, tasks):
-        action_space_map = {}  # Maps task id to its action space
-
+    def _get_action_spaces(cls, tasks):
+        action_space_map = {}
         for task in tasks:
             if task.action_space_id not in action_space_map:
                 action_space_map[task.action_space_id] = task.action_space
             elif action_space_map[task.action_space_id] != task.action_space:
-                raise InvalidTaskAttributeException(f"Action sizes were mismatched for task {task.action_space_id}")
-
+                raise InvalidTaskAttributeException(
+                    f"Action sizes were mismatched for task {task.action_space_id}"
+                )
         return action_space_map
 
     @classmethod
-    def _get_common_attribute(self, task_attributes):
+    def _get_common_attribute(cls, task_attributes):
         common_attribute = None
-
         for task_attribute in task_attributes:
             if common_attribute is None:
                 common_attribute = task_attribute
-
             if task_attribute != common_attribute:
                 raise InvalidTaskAttributeException("Tasks do not have a common attribute.")
-
         return common_attribute
 
+    # ---------------------------------------------------------------------
+    # Continual evaluation and forgetting metrics
+    # ---------------------------------------------------------------------
     def _run_continual_eval(self, task_run_id, policy, summary_writer, total_timesteps, set_ref_task_run_id=None):
-        # ADDED: Compute effective rank at each continual eval point
-        self._compute_effective_rank(policy, total_timesteps, summary_writer)
+        model_for_hooks = self._get_policy_model(policy)
+        if model_for_hooks is not None:
+            self._install_rank_hooks(model_for_hooks)
+        else:
+            self._logger.warning("Effective-rank: no model found; skipping activation capture.")
 
         def _iqm_local(xs):
             xs = np.asarray(xs, dtype=np.float64)
@@ -296,12 +505,17 @@ class Experiment(object):
                 hi = n
             return float(xs[lo:hi].mean())
 
-        # Run a small amount of eval on all non-eval, not-currently-running tasks
+        per_task_avgs = []
+        per_task_mins = []
+        per_task_maxs = []
+
         for test_task_run_id, test_task in enumerate(self.tasks):
-            # not checking test_task._task_spec.eval_mode anymore since some eval tasks
-            # (for train/test pairs) should be continual eval
             if not test_task._task_spec.with_continual_eval:
                 continue
+
+            # Clear buffers so activations are from THIS continual-eval run
+            if model_for_hooks is not None:
+                self._reset_rank_buffers()
 
             episodes_cap = None
             if hasattr(test_task, "_continual_eval_task_spec"):
@@ -311,7 +525,6 @@ class Experiment(object):
 
             self._logger.info(f"Continual eval for task: {test_task_run_id}")
 
-            # Don't increment the total_timesteps counter for continual tests
             test_task_runner = self.tasks[test_task_run_id].continual_eval(
                 test_task_run_id,
                 policy,
@@ -319,14 +532,13 @@ class Experiment(object):
                 output_dir=self.output_dir,
                 timestep_log_offset=total_timesteps,
             )
+
             test_complete = False
             returns_all = []
 
             while not test_complete:
                 try:
                     info = next(test_task_runner)
-
-                    # Task generator yields: (task_timesteps, data); where data is (returns, logs) or None
                     if not (isinstance(info, tuple) and len(info) == 2):
                         continue
 
@@ -348,6 +560,7 @@ class Experiment(object):
                                         break
                         elif isinstance(rewards, numbers.Real):
                             returns_all.append(float(rewards))
+
                         if len(returns_all) >= episodes_cap:
                             test_complete = True
                             break
@@ -355,63 +568,112 @@ class Experiment(object):
                 except StopIteration:
                     test_complete = True
 
-            # store aggregate eval return (mean over collected episodes) for this task
+            # Effective rank from activations collected during this eval run
+            self._compute_effective_rank(
+                policy,
+                total_timesteps,
+                summary_writer,
+                log_prefix=f"effective_rank/task_{test_task_run_id}",
+                do_log=True,
+            )
+
+            if self._last_effective_rank_stats is not None:
+                per_task_avgs.append(self._last_effective_rank_stats["avg"])
+                per_task_mins.append(self._last_effective_rank_stats["min"])
+                per_task_maxs.append(self._last_effective_rank_stats["max"])
+
+            # Store eval returns for forgetting
             if returns_all:
                 mean_ret = float(np.mean(returns_all))
                 iqm_ret = _iqm_local(returns_all)
-                self._eval_last_return[test_task_run_id] = mean_ret
+                self._eval_last_return_mean[test_task_run_id] = mean_ret
                 self._eval_last_return_iqm[test_task_run_id] = iqm_ret
 
             self._logger.info(f"Completed continual eval for task: {test_task_run_id}")
-        
 
-        # ADDED: If requested, lock in the "reference" return for a task at end-of-task boundary
-        if set_ref_task_run_id is not None and set_ref_task_run_id in self._eval_last_return:
-            self._ref_return_end_of_task[set_ref_task_run_id] = self._eval_last_return[set_ref_task_run_id]
+        # Lock in reference return at end-of-task boundary (mean and IQM)
+        if set_ref_task_run_id is not None:
+            if set_ref_task_run_id in self._eval_last_return_mean:
+                self._ref_return_end_of_task_mean[set_ref_task_run_id] = self._eval_last_return_mean[set_ref_task_run_id]
+            if set_ref_task_run_id in self._eval_last_return_iqm:
+                self._ref_return_end_of_task_iqm[set_ref_task_run_id] = self._eval_last_return_iqm[set_ref_task_run_id]
 
-        # ADDED: log isolated forgetting scalars
-        # isolated forgetting for task i at time t := ref_end_of_task(i) - current_eval(i)
-        forgetting_vals = []
-        for tid, ref in self._ref_return_end_of_task.items():
-            cur = self._eval_last_return.get(tid, None)
+        # Isolated forgetting: ref_end_of_task(i) - current_eval(i)
+        forgetting_mean_vals = []
+        forgetting_iqm_vals = []
+
+        for tid, ref in self._ref_return_end_of_task_mean.items():
+            cur = self._eval_last_return_mean.get(tid, None)
             if cur is None:
                 continue
             f = float(ref) - float(cur)
-            forgetting_vals.append(f)
+            forgetting_mean_vals.append(f)
+            summary_writer.add_scalar(f"forgetting/isolated_task_mean/{tid}", f, global_step=total_timesteps)
 
-            # per-task forgetting (optional but very useful)
-            summary_writer.add_scalar(f"forgetting/isolated_task/{tid}", f, global_step=total_timesteps)
+        for tid, ref in self._ref_return_end_of_task_iqm.items():
+            cur = self._eval_last_return_iqm.get(tid, None)
+            if cur is None:
+                continue
+            f = float(ref) - float(cur)
+            forgetting_iqm_vals.append(f)
+            summary_writer.add_scalar(f"forgetting/isolated_task_iqm/{tid}", f, global_step=total_timesteps)
 
-        if forgetting_vals:
-            avg_f = float(sum(forgetting_vals) / len(forgetting_vals))
-            summary_writer.add_scalar("forgetting/isolated_avg", avg_f, global_step=total_timesteps)
+        if forgetting_mean_vals:
+            summary_writer.add_scalar(
+                "forgetting/isolated_avg_mean",
+                float(np.mean(forgetting_mean_vals)),
+                global_step=total_timesteps,
+            )
+
+        if forgetting_iqm_vals:
+            summary_writer.add_scalar(
+                "forgetting/isolated_avg_iqm",
+                float(np.mean(forgetting_iqm_vals)),
+                global_step=total_timesteps,
+            )
+
+        if forgetting_mean_vals or forgetting_iqm_vals:
             summary_writer.flush()
 
+        # Across-task aggregate effective-rank at this checkpoint
+        if per_task_avgs:
+            summary_writer.add_scalar(
+                "effective_rank/across_tasks_avg",
+                float(np.mean(per_task_avgs)),
+                global_step=total_timesteps,
+            )
+            summary_writer.add_scalar(
+                "effective_rank/across_tasks_min",
+                float(np.min(per_task_mins)),
+                global_step=total_timesteps,
+            )
+            summary_writer.add_scalar(
+                "effective_rank/across_tasks_max",
+                float(np.max(per_task_maxs)),
+                global_step=total_timesteps,
+            )
+            summary_writer.flush()
 
+    # ---------------------------------------------------------------------
+    # Main experiment execution
+    # ---------------------------------------------------------------------
     def _run(self, policy, summary_writer):
-        # Load as necessary
         policy.load(self.output_dir)
         run_metadata = RunMetadata(self._output_dir)
         start_cycle_id = run_metadata.cycle_id
         start_task_id = run_metadata.task_id
         start_task_timesteps = run_metadata.task_timesteps
 
-        # Only updated after a task is complete. To get the current within-task number, add task_timesteps
         total_train_timesteps = run_metadata.total_train_timesteps
-
         timesteps_per_save = policy.config.timesteps_per_save
 
         for cycle_id in range(start_cycle_id, self._cycle_count):
             for task_run_id, task in enumerate(self.tasks[start_task_id:], start=start_task_id):
-                # Run the current task as a generator so we can intersperse testing tasks during the run
                 self._logger.info(f"Starting cycle {cycle_id} task {task_run_id}")
                 self._console(f"[TASK] start | cycle={cycle_id} task={task_run_id}")
-                
-                # ADDED: INTEGRATION WITH POLICY HOOKS
-                # Policy hook: task is about to start (train or eval)
+
                 if not task._task_spec.eval_mode:
                     policy.on_task_start(cycle_id=cycle_id, task_run_id=task_run_id)
-                # END ADDED
 
                 task_complete = False
                 task_runner = task.run(
@@ -422,75 +684,66 @@ class Experiment(object):
                     timestep_log_offset=total_train_timesteps,
                     task_timestep_start=start_task_timesteps,
                 )
-                task_timesteps = start_task_timesteps  # What timestep the task is currently on. Cumulative during a task.
-                continual_freq = self._continual_testing_freq
-                last_timestep_saved = None  # Ensures a save at the beginning of every new task (after one train step)
 
-                # The last step at which continual testing was done. Initializing to be more negative
-                # than the frequency we collect at, to ensure we do a collection right away
+                task_timesteps = start_task_timesteps
+                continual_freq = self._continual_testing_freq
+                last_timestep_saved = None
                 last_continual_testing_step = -10 * continual_freq if continual_freq is not None else None
-                last_printed_t = None  # For logging training progress
 
                 while not task_complete:
                     try:
                         task_timesteps, info = next(task_runner)
-                        # ADDED: For better logging of training progress
+
                         if (not task._task_spec.eval_mode) and (task_timesteps % 1024 == 0):
-                            # info is usually: ([reward], list_of_metric_dicts)
                             r = None
                             stats = {}
-
                             if isinstance(info, tuple) and len(info) == 2:
                                 reward_list, metric_list = info
                                 if reward_list:
                                     r = reward_list[-1]
-
                                 if metric_list:
                                     for m in metric_list:
                                         if m.get("type") == "scalar":
                                             stats[m["tag"]] = m["value"]
 
                             r_str = f"{r:.3f}" if isinstance(r, (int, float)) else "NA"
-
                             vloss = stats.get("value_loss")
                             aloss = stats.get("action_loss")
-                            ent   = stats.get("dist_entropy")
-
+                            ent = stats.get("dist_entropy")
                             vloss_str = f"{vloss:.4f}" if isinstance(vloss, (int, float)) else "NA"
                             aloss_str = f"{aloss:.4f}" if isinstance(aloss, (int, float)) else "NA"
-                            ent_str   = f"{ent:.3f}"   if isinstance(ent, (int, float)) else "NA"
+                            ent_str = f"{ent:.3f}" if isinstance(ent, (int, float)) else "NA"
 
                             self._console(
                                 f"[TRAIN] cycle={cycle_id} task={task_run_id} "
                                 f"t={total_train_timesteps + task_timesteps} "
                                 f"r={r_str} vloss={vloss_str} aloss={aloss_str} ent={ent_str}"
                             )
-                            # END ADDED
 
                     except StopIteration:
                         task_complete = True
 
                     if not task._task_spec.eval_mode:
-                        if last_timestep_saved is None or task_timesteps - last_timestep_saved >= timesteps_per_save or \
-                                task_complete:
-                            # Save the metadata that allows us to resume where we left off.
-                            # This will not copy files in large_file_path such as 
-                            # replay buffers, and is intended for debugging model changes
-                            # at task boundaries.
+                        if (
+                            last_timestep_saved is None
+                            or task_timesteps - last_timestep_saved >= timesteps_per_save
+                            or task_complete
+                        ):
                             run_metadata.save(cycle_id, task_run_id, task_timesteps, total_train_timesteps)
                             policy.save(self.output_dir, cycle_id, task_run_id, task_timesteps)
-                            if task_complete:
-                                task_boundary_dir = os.path.join(self.output_dir, f'cycle{cycle_id}_task{task_run_id}')
-                                os.makedirs(task_boundary_dir, exist_ok=True)
 
+                            if task_complete:
+                                task_boundary_dir = os.path.join(self.output_dir, f"cycle{cycle_id}_task{task_run_id}")
+                                os.makedirs(task_boundary_dir, exist_ok=True)
                                 policy.save(task_boundary_dir, cycle_id, task_run_id, task_timesteps)
 
                             last_timestep_saved = task_timesteps
 
-                    # If we're already doing eval, don't do a forced eval run (nothing has trained to warrant it anyway)
-                    # Evaluate intermittently. Every time is too slow
-                    if continual_freq is not None and not task._task_spec.eval_mode and \
-                            total_train_timesteps + task_timesteps > last_continual_testing_step + continual_freq:
+                    if (
+                        continual_freq is not None
+                        and not task._task_spec.eval_mode
+                        and total_train_timesteps + task_timesteps > last_continual_testing_step + continual_freq
+                    ):
                         self._run_continual_eval(
                             task_run_id,
                             policy,
@@ -499,12 +752,9 @@ class Experiment(object):
                         )
                         last_continual_testing_step = total_train_timesteps + task_timesteps
 
-                # Log out some info about the just-completed task
                 self._logger.info(f"Task {task_run_id} complete")
                 self._console(f"[TASK] end   | cycle={cycle_id} task={task_run_id} steps={task_timesteps}")
 
-                # ADDED: INTEGRATION WITH POLICY HOOKS
-                # Policy hook: task has finished (train or eval)
                 if not task._task_spec.eval_mode:
                     self._run_continual_eval(
                         task_run_id,
@@ -514,19 +764,14 @@ class Experiment(object):
                         set_ref_task_run_id=task_run_id,
                     )
                     policy.on_task_end(cycle_id=cycle_id, task_run_id=task_run_id)
-                # END ADDED
 
-                # Only increment the global counter for training (it's supposed to represent number of frames *trained on*)
                 if not task._task_spec.eval_mode:
                     total_train_timesteps += task_timesteps
 
-                # On the next task, start from the beginning (regardless of where we loaded from)
                 start_task_timesteps = 0
 
-            # On the next cycle, start from the beginning again (regardless of where we loaded from)
             start_task_id = 0
 
-        # ADDED: Save effective rank history at end of experiment
         if self._effective_rank_history:
             self.save_effective_rank_history()
 
@@ -536,5 +781,4 @@ class Experiment(object):
         except Exception as e:
             self._logger.exception(f"Failed with exception: {e}")
             policy.shutdown()
-
             raise e

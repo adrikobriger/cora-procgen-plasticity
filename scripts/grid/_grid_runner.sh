@@ -50,22 +50,8 @@ srun --cpu-bind=cores --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" \
     --trials 1 \
     --num_processes "$NUM_PROCESSES" \
     --trial_seeds "$TRIAL_SEEDS" \
+    --objective iqm \
     --params_inline "$PARAMS" \
     --output_root "$OUTPUT_ROOT"
-
-# Plot IQM returns for this run (latest timestamp dir for this method)
-BASE_METHOD_DIR="$OUTPUT_ROOT/$EXPERIMENT/$METHOD"
-if [[ -d "$BASE_METHOD_DIR" ]]; then
-  LATEST_RUN_DIR=$(ls -td "$BASE_METHOD_DIR"/* 2>/dev/null | head -n 1 || true)
-  if [[ -n "$LATEST_RUN_DIR" && -d "$LATEST_RUN_DIR" ]]; then
-    echo "Plotting IQM returns in $LATEST_RUN_DIR"
-    python tools/plot_iqm_return.py \
-      --runs_dir "$LATEST_RUN_DIR" \
-      --out_dir "$LATEST_RUN_DIR/plots" \
-      --task_length 500000 \
-      --grid_step 50000 \
-      --formats png
-  fi
-fi
 
 echo "Grid run complete!"

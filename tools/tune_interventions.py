@@ -138,10 +138,10 @@ def _search_spaces(method: str, opt_steps_total: Optional[int] = None):
                 return int(max(lo, min(hi, x)))
 
             # Update interval candidates now represent "updates per run" (relative schedule)
-            update_interval_grid = [20, 40, 60]
+            update_interval_grid = [10, 20, 40]
 
             # Warmup candidates now represent fraction of total optimizer steps
-            warmup_grid = [0.0, 0.03, 0.07]
+            warmup_grid = [0.0, 0.03]
 
             # Random sampling ranges (relative schedule)
             min_update = 5
@@ -156,9 +156,9 @@ def _search_spaces(method: str, opt_steps_total: Optional[int] = None):
             }
 
             grid_space = {
-                "target_sparsity": [0.6, 0.8, 0.9],
+                "target_sparsity": [0.6],
                 "update_interval": update_interval_grid,
-                "prune_fraction": [0.05, 0.1, 0.2],
+                "prune_fraction": [0.1, 0.2],
                 "warmup_steps": warmup_grid,
             }
         else:

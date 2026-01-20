@@ -28,10 +28,10 @@ class ReDoIntervention(InterventionBase):
 
         # HYPERPARAMETERS
         self.update_interval: int = int(p.get("update_interval", 5000))
-        self.warmup_steps: int = int(p.get("warmup_steps", 0))
+        self.warmup_steps: int = int(p.get("warmup_steps", 12000))
         self.tau: float = float(p.get("tau", 0.10))
         self.ema_beta: float = float(p.get("ema_beta", 0.99))
-        self.max_recycle_frac: float = float(p.get("max_recycle_frac", 0.05))
+        self.max_recycle_frac: float = float(p.get("max_recycle_frac", 0.10))
         self.log_interval: int = int(p.get("log_interval", 1000))
 
         # BUFFER SETTINGS

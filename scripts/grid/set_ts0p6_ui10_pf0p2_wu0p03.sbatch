@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=grid-set-ts0p6-ui60-pf0p2-wu0p03
+#SBATCH --job-name=grid-set-ts0p6-ui10-pf0p2-wu0p03
 #SBATCH --partition=digitallab
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -11,8 +11,8 @@
 #SBATCH --error=logs/%x_%j.err
 
 METHOD="set"
-PARAMS='{"target_sparsity":0.6,"update_interval":60,"prune_fraction":0.2,"warmup_steps":0.03}'
+PARAMS='{"target_sparsity":0.6,"update_interval":10,"prune_fraction":0.2,"warmup_steps":0.03}'
 NUM_PROCESSES="${NUM_PROCESSES:-8}"
-TRIAL_SEEDS="${TRIAL_SEEDS:-0}"
+TRIAL_SEEDS="${TRIAL_SEEDS:-0,1,2}"
 
 source scripts/grid/_grid_runner.sh

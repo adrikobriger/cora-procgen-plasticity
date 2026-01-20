@@ -13,6 +13,6 @@
 METHOD="set"
 PARAMS='{"target_sparsity":0.6,"update_interval":20,"prune_fraction":0.1,"warmup_steps":0.03}'
 NUM_PROCESSES="${NUM_PROCESSES:-8}"
-TRIAL_SEEDS="${TRIAL_SEEDS:-0}"
+TRIAL_SEEDS="${TRIAL_SEEDS:-0,1,2}"
 
 source scripts/grid/_grid_runner.sh

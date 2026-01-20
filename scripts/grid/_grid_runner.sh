@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="${REPO:-/scratch/s5579783/cora-procgen-plasticity}"
 VENV="${VENV:-/scratch/s5579783/venvs/cora}"
-EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_2_cycles_500k_starpilot}"
+EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_1_cycle_500k_starpilot}"
 NUM_PROCESSES="${NUM_PROCESSES:-8}"
 TRIAL_SEEDS="${TRIAL_SEEDS:-0,1,2}"
 if [[ "$TRIAL_SEEDS" == "0" ]]; then

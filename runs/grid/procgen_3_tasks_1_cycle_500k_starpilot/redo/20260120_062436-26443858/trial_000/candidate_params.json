@@ -1,7 +1,0 @@
-{
-  "trial": 0,
-  "params": {
-    "update_interval": 5000,
-    "tau": 0.1
-  }
-}

@@ -28,6 +28,7 @@ import math
 import itertools
 import numbers
 import datetime
+import uuid
 import warnings
 
 # Suppress Gym deprecation warnings
@@ -1468,8 +1469,16 @@ def main():
     trial_seeds_str = ",".join(str(s) for s in args.trial_seeds)
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_dir = os.path.join(args.output_root, args.experiment, args.method, timestamp)
-    os.makedirs(base_dir, exist_ok=True)
+    slurm_job_id = os.environ.get("SLURM_JOB_ID", "")
+    suffix_components = [timestamp]
+    if slurm_job_id:
+        suffix_components.append(slurm_job_id)
+    else:
+        suffix_components.append(str(os.getpid()))
+        suffix_components.append(uuid.uuid4().hex[:6])
+    unique_suffix = "-".join(suffix_components)
+    base_dir = os.path.join(args.output_root, args.experiment, args.method, unique_suffix)
+    os.makedirs(base_dir, exist_ok=False)
 
     print(f"Starting tuning for method: {args.method}")
     print(f"Experiment: {args.experiment}")

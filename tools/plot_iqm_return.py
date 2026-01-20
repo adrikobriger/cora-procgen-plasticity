@@ -11,6 +11,7 @@ import argparse
 import re
 import os
 import json
+import sys
 from pathlib import Path
 from collections import defaultdict
 from typing import Dict, List, Tuple, Optional
@@ -18,6 +19,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from tensorboard.backend.event_processing import event_accumulator
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.append(str(SCRIPT_DIR))
+
+from select_best_config import select_best_configs, write_best_configs
 
 
 def find_event_files(runs_dir: Path) -> Dict[str, List[Path]]:
@@ -87,6 +94,73 @@ def extract_run_series(
     values = [np.mean(step_values[step]) for step in steps]
     
     return np.array(steps), np.array(values)
+
+
+def extract_run_series_with_mode(
+    event_files: List[Path],
+    tag_prefix: str,
+    min_points: int,
+    allow_constant_step_sequence: bool = False
+) -> Optional[Tuple[np.ndarray, np.ndarray, str]]:
+    """
+    Like extract_run_series, but can convert constant-step eval logs into a sequence.
+    Returns (x, y, x_kind) where x_kind is 'steps' or 'index'.
+    """
+    ea = event_accumulator.EventAccumulator(str(event_files[0].parent))
+    ea.Reload()
+
+    all_tags = ea.Tags().get('scalars', [])
+    matching_tags = [tag for tag in all_tags if tag.startswith(tag_prefix)]
+    if not matching_tags:
+        return None
+
+    # Build dict: step -> list of task IQM values at that step
+    step_values = defaultdict(list)
+    steps_seen = set()
+
+    for tag in matching_tags:
+        try:
+            scalar_events = ea.Scalars(tag)
+            for event in scalar_events:
+                step_values[event.step].append(event.value)
+                steps_seen.add(event.step)
+        except KeyError:
+            continue
+
+    if not step_values or len(step_values) < min_points:
+        # If all eval steps collapse to a single step, we may still want to recover a sequence.
+        if not allow_constant_step_sequence:
+            return None
+
+    # If all steps are identical and requested, use index-based series across tags.
+    if allow_constant_step_sequence and len(steps_seen) == 1:
+        tag_series = []
+        min_len = None
+        for tag in matching_tags:
+            try:
+                scalar_events = ea.Scalars(tag)
+            except KeyError:
+                continue
+            values = [ev.value for ev in scalar_events]
+            if not values:
+                continue
+            tag_series.append(values)
+            min_len = len(values) if min_len is None else min(min_len, len(values))
+
+        if not tag_series or min_len is None or min_len < min_points:
+            return None
+
+        # Average across tasks at each index
+        vals = []
+        for i in range(min_len):
+            vals.append(float(np.mean([series[i] for series in tag_series])))
+        x = np.arange(min_len, dtype=np.float64)
+        return x, np.array(vals, dtype=np.float64), 'index'
+
+    # Default path (step-based)
+    steps = sorted(step_values.keys())
+    values = [np.mean(step_values[step]) for step in steps]
+    return np.array(steps), np.array(values), 'steps'
 
 
 def find_metadata_file(run_dir: Path) -> Optional[Path]:
@@ -916,8 +990,201 @@ def _plot_train_summary(
 
 
 def format_step_tick(x, pos):
-    """Format tick labels as 100k, 200k, etc."""
-    return f'{int(x/1000)}k'
+    """Format tick labels as 100k, 200k, 1.0M, 1.1M, etc."""
+    try:
+        x = float(x)
+    except Exception:
+        return ""
+    if abs(x) >= 1_000_000:
+        return f"{x/1_000_000:.1f}M"
+    return f"{int(x/1000)}k"
+
+
+def _format_params_label(params: dict, max_len: int = 80) -> str:
+    if not isinstance(params, dict) or not params:
+        return "(no params)"
+    parts = [f"{k}={params[k]}" for k in sorted(params.keys())]
+    label = ", ".join(parts)
+    if len(label) > max_len:
+        label = label[:max_len - 3] + "..."
+    return label
+
+
+def _load_json(path: Path) -> Optional[dict]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _collect_config_runs(
+    runs_dir: Path,
+    tag_prefix: str,
+    min_points: int,
+    allow_constant_step_sequence: bool = False
+) -> Dict[str, Dict[str, dict]]:
+    """
+    Collect runs grouped by configuration (trial directory).
+    Returns: method -> config_id(trial_dir) -> {params, runs:[{seed, steps, values}]}
+    """
+    results: Dict[str, Dict[str, dict]] = defaultdict(dict)
+
+    for candidate_params in runs_dir.rglob("candidate_params.json"):
+        trial_dir = candidate_params.parent
+        params_blob = _load_json(candidate_params) or {}
+        params = params_blob.get("params", params_blob)
+        method, _ = parse_method_from_path(str(trial_dir))
+        if method is None:
+            continue
+        config_id = str(trial_dir)
+        entry = results[method].setdefault(config_id, {"params": params, "runs": []})
+
+        for seed_dir in trial_dir.iterdir():
+            if not seed_dir.is_dir() or not seed_dir.name.startswith("seed_"):
+                continue
+            tb_dir = seed_dir / "tb"
+            if not tb_dir.exists():
+                continue
+            event_files = list(tb_dir.glob("events.out.tfevents*"))
+            if not event_files:
+                continue
+            series = extract_run_series_with_mode(
+                event_files,
+                tag_prefix,
+                min_points,
+                allow_constant_step_sequence=allow_constant_step_sequence,
+            )
+            if series is None:
+                continue
+            seed_match = re.match(r"^seed[_-]?(\d+)$", seed_dir.name)
+            seed_val = int(seed_match.group(1)) if seed_match else 0
+            steps, values, x_kind = series
+            entry["runs"].append({
+                "seed": seed_val,
+                "steps": steps,
+                "values": values,
+                "x_kind": x_kind,
+                "tb_dir": str(tb_dir),
+            })
+
+    return results
+
+
+def _plot_configs_for_method(
+    method: str,
+    configs: Dict[str, dict],
+    best_config_id: Optional[str],
+    out_dir: Path,
+    title_prefix: str,
+    formats: List[str],
+    task_length: int,
+    num_tasks_override: Optional[int],
+    ymin: Optional[float],
+    ymax: Optional[float],
+    best_only: bool = False,
+):
+    if not configs:
+        return 0
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    color_iter = iter(colors)
+    legend_handles = []
+    legend_labels = []
+
+    # Determine visible x-range
+    all_steps = []
+    for cfg in configs.values():
+        for run in cfg.get("runs", []):
+            all_steps.append(run["steps"])
+    if not all_steps:
+        plt.close(fig)
+        return 0
+
+    x_min = min([steps.min() for steps in all_steps])
+    x_max = max([steps.max() for steps in all_steps])
+
+    num_tasks = int(num_tasks_override) if num_tasks_override is not None else int(np.ceil(x_max / task_length))
+    x_max_visible = x_max
+    if num_tasks_override is not None and task_length > 0:
+        expected_xmax = num_tasks * task_length
+        if expected_xmax > x_max_visible:
+            x_max_visible = expected_xmax
+
+    x_kind = 'steps'
+    for cfg in configs.values():
+        for run in cfg.get("runs", []):
+            if run.get("x_kind") == 'index':
+                x_kind = 'index'
+                break
+
+    for config_id, cfg in configs.items():
+        if best_only and config_id != best_config_id:
+            continue
+        color = next(color_iter, None) or "#333333"
+        runs = cfg.get("runs", [])
+        if not runs:
+            continue
+
+        is_best = (config_id == best_config_id)
+        label = _format_params_label(cfg.get("params", {}))
+        if is_best and not best_only:
+            label = f"{label} (best)"
+
+        for idx, run in enumerate(runs):
+            line_alpha = 0.85 if is_best else 0.35
+            line_width = 2.2 if is_best else 1.0
+            ax.plot(run["steps"], run["values"], color=color, alpha=line_alpha, linewidth=line_width,
+                    label=label if idx == 0 else "_nolegend_", zorder=3 if is_best else 2)
+
+        if label not in legend_labels:
+            legend_handles.append(Line2D([], [], color=color, linewidth=2.0))
+            legend_labels.append(label)
+
+    # Task boundaries/labels
+    if task_length > 0:
+        for k in range(1, num_tasks + 1):
+            boundary = k * task_length
+            if x_min < boundary <= x_max_visible:
+                ax.axvline(boundary, linestyle='--', color='black', alpha=0.5, linewidth=1.2, zorder=1)
+
+        y_min, y_max = ax.get_ylim()
+        label_y = y_min + 0.95 * (y_max - y_min)
+        for k in range(num_tasks):
+            center = (k + 0.5) * task_length
+            if x_min < center < x_max_visible:
+                ax.text(center, label_y, f'Task {k+1}', ha='center', va='top', fontsize=11,
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='none', alpha=0.7))
+
+    from matplotlib.ticker import FuncFormatter, MultipleLocator
+    if x_kind == 'steps':
+        ax.xaxis.set_major_locator(MultipleLocator(100000))
+        ax.xaxis.set_major_formatter(FuncFormatter(format_step_tick))
+
+    ax.set_xlim(x_min, x_max_visible)
+    ax.set_xlabel("Eval index" if x_kind == 'index' else "Environment steps", fontsize=12)
+    ax.set_ylabel("IQM return (avg across tasks)", fontsize=12)
+    ax.set_title(f"{method} – {title_prefix}", fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    if legend_handles:
+        ax.legend(legend_handles, legend_labels, fontsize=9, framealpha=0.9)
+
+    if ymin is not None or ymax is not None:
+        current_ymin, current_ymax = ax.get_ylim()
+        ax.set_ylim(ymin if ymin is not None else current_ymin,
+                    ymax if ymax is not None else current_ymax)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    safe_method = method.lower().replace(" ", "_")
+    suffix = "best" if best_only else "all_configs"
+    base_path = out_dir / f"{safe_method}_{suffix}"
+    saved = 0
+    for fmt in formats:
+        fig.savefig(base_path.with_suffix(f".{fmt}"), format=fmt, dpi=300, bbox_inches="tight")
+        saved += 1
+    plt.close(fig)
+    return saved
 
 
 def plot_method(
@@ -1093,8 +1360,10 @@ def main():
     )
     parser.add_argument('--runs_dir', type=str, default='runs',
                         help='Directory containing run folders')
-    parser.add_argument('--out_dir', type=str, default='plots',
-                        help='Output directory for plots')
+    parser.add_argument('--out_dir', type=str, default='results/plots',
+                        help='Output directory for legacy averaged plots')
+    parser.add_argument('--results_dir', type=str, default='results',
+                        help='Base results directory (plots and best configs)')
     parser.add_argument('--tag_prefix', type=str, default='train_reward_iqm/',
                         help='TensorBoard scalar tag prefix')
     parser.add_argument('--grid_step', type=int, default=50000,
@@ -1107,6 +1376,8 @@ def main():
                         help='Regex to extract method name from path (group 1)')
     parser.add_argument('--min_points', type=int, default=5,
                         help='Minimum number of logged points required per run')
+    parser.add_argument('--min_points_eval', type=int, default=1,
+                        help='Minimum number of logged points required for eval plots')
     parser.add_argument('--formats', type=str, default='png',
                         help='Output file format(s), comma-separated (e.g., "png,pdf" or "both" for both)')
     parser.add_argument('--rng_seed', type=int, default=0,
@@ -1137,6 +1408,16 @@ def main():
                         help='Normalization mode for ablation lines (max scales each curve to [0,1])')
     parser.add_argument('--steps_per_epoch', type=int, default=1,
                         help='Divide x-axis steps by this value when drawing the ablation figure (use >1 to show epochs)')
+    parser.add_argument('--mode', choices=['train', 'eval', 'both'], default='both',
+                        help='Which IQM plots to generate (train, eval, or both)')
+    parser.add_argument('--compare_train_eval', action='store_true', default=False,
+                        help='Alias for --mode both')
+    parser.add_argument('--legacy_average', action='store_true', default=False,
+                        help='Use legacy averaged plotting (method-level CI)')
+    parser.add_argument('--best_lambda', type=float, default=0.5,
+                        help='Lambda for composite best-score: score - lambda * forgetting')
+    parser.add_argument('--best_prefer_eval', action='store_true', default=False,
+                        help='Prefer eval IQM when selecting best configs (if available)')
     
     args = parser.parse_args()
     
@@ -1148,114 +1429,189 @@ def main():
     
     runs_dir = Path(args.runs_dir)
     out_dir = Path(args.out_dir)
+    results_dir = Path(args.results_dir)
     
     if not runs_dir.exists():
         print(f"Error: runs_dir '{runs_dir}' does not exist")
         return 1
     
-    print(f"Scanning {runs_dir} for TensorBoard event files...")
-    run_events = find_event_files(runs_dir)
-    print(f"Found {len(run_events)} run directories with event files")
-    
-    if not run_events:
-        print("No event files found!")
-        return 1
-    
-    print(f"\nExtracting time series (tag_prefix='{args.tag_prefix}')...")
-    methods = group_runs(
-        run_events,
-        args.tag_prefix,
-        args.min_points,
-        args.method_regex,
-        args.seed_regex,
-        verbose=True
-    )
-    
-    if not methods:
-        print(f"No valid runs found with tag prefix '{args.tag_prefix}'")
-        return 1
-    
-    print(f"\nFound {len(methods)} method(s):")
-    for method, seeds in methods.items():
-        print(f"  - {method}: {len(seeds)} seed(s) (seeds: {sorted(seeds.keys())})")
-    
-    print(f"\nAligning and computing bootstrap CI (grid_step={args.grid_step})...")
-    print(f"Generating plots (one per method)...\n")
-    
-    plots_created = 0
-    
-    for method, seed_data in methods.items():
-        print(f"Processing {method}...")
-        
-        grid, aligned = align_and_interpolate(seed_data, args.grid_step)
-        
-        if len(grid) == 0:
-            print(f"  ⚠ Skipping {method}: no overlap in step ranges\n")
-            continue
-        
-        mean, lower_ci, upper_ci = bootstrap_ci(
-            aligned,
-            n_bootstrap=args.bootstrap,
-            rng_seed=args.rng_seed
-        )
-        
-        print(f"  • {len(seed_data)} seeds used")
-        print(f"  • {len(grid)} grid points")
-        print(f"  • Step range: [{grid.min():,}, {grid.max():,}]")
-        
-        # Create output directory and path for this method
-        method_dir = out_dir / method
-        # Use first format for base filename (will be replaced per format)
-        out_path = method_dir / f"iqm_return_ci.{formats[0]}"
-        
-        # Plot this method
-        plot_method(
-            method_name=method,
-            seed_data=seed_data,
-            grid=grid,
-            aligned_values=aligned,
-            mean=mean,
-            lower_ci=lower_ci,
-            upper_ci=upper_ci,
-            out_path=out_path,
-            formats=formats,
-            task_length=args.task_length,
-            num_tasks_override=args.num_tasks,
-            ymin=args.ymin,
-            ymax=args.ymax,
-            save_data=(not args.no_save_data) and args.save_data,
-            save_aligned=args.save_aligned,
-            rng_seed=args.rng_seed
-        )
-        
-        plots_created += 1
-        print()
-    
-    if args.ablation_config:
-        config_path = Path(args.ablation_config)
-        config = _load_json_config(config_path)
-        if config is None:
-            print(f"Error: cannot read ablation config '{config_path}'")
-        else:
-            saved = _plot_ablation_grid(methods, config, args, out_dir, formats)
-            if saved:
-                plots_created += 1
+    if args.compare_train_eval:
+        args.mode = 'both'
 
-    if args.summary_config:
-        summary_path = Path(args.summary_config)
-        summary_config = _load_json_config(summary_path)
-        if summary_config is None:
-            print(f"Error: cannot read summary config '{summary_path}'")
-        else:
-            saved = _plot_train_summary(methods, summary_config, args, out_dir, formats)
-            if saved:
-                plots_created += saved
+    # Legacy path for averaged plots / ablations
+    if args.legacy_average or args.ablation_config or args.summary_config:
+        print(f"Scanning {runs_dir} for TensorBoard event files...")
+        run_events = find_event_files(runs_dir)
+        print(f"Found {len(run_events)} run directories with event files")
+
+        if not run_events:
+            print("No event files found!")
+            return 1
+
+        print(f"\nExtracting time series (tag_prefix='{args.tag_prefix}')...")
+        methods = group_runs(
+            run_events,
+            args.tag_prefix,
+            args.min_points,
+            args.method_regex,
+            args.seed_regex,
+            verbose=True
+        )
+
+        if not methods:
+            print(f"No valid runs found with tag prefix '{args.tag_prefix}'")
+            return 1
+
+        print(f"\nFound {len(methods)} method(s):")
+        for method, seeds in methods.items():
+            print(f"  - {method}: {len(seeds)} seed(s) (seeds: {sorted(seeds.keys())})")
+
+        print(f"\nAligning and computing bootstrap CI (grid_step={args.grid_step})...")
+        print(f"Generating plots (one per method)...\n")
+
+        plots_created = 0
+
+        for method, seed_data in methods.items():
+            print(f"Processing {method}...")
+
+            grid, aligned = align_and_interpolate(seed_data, args.grid_step)
+
+            if len(grid) == 0:
+                print(f"  ⚠ Skipping {method}: no overlap in step ranges\n")
+                continue
+
+            mean, lower_ci, upper_ci = bootstrap_ci(
+                aligned,
+                n_bootstrap=args.bootstrap,
+                rng_seed=args.rng_seed
+            )
+
+            print(f"  • {len(seed_data)} seeds used")
+            print(f"  • {len(grid)} grid points")
+            print(f"  • Step range: [{grid.min():,}, {grid.max():,}]")
+
+            method_dir = out_dir / method
+            out_path = method_dir / f"iqm_return_ci.{formats[0]}"
+
+            plot_method(
+                method_name=method,
+                seed_data=seed_data,
+                grid=grid,
+                aligned_values=aligned,
+                mean=mean,
+                lower_ci=lower_ci,
+                upper_ci=upper_ci,
+                out_path=out_path,
+                formats=formats,
+                task_length=args.task_length,
+                num_tasks_override=args.num_tasks,
+                ymin=args.ymin,
+                ymax=args.ymax,
+                save_data=(not args.no_save_data) and args.save_data,
+                save_aligned=args.save_aligned,
+                rng_seed=args.rng_seed
+            )
+
+            plots_created += 1
+            print()
+    
+        if args.ablation_config:
+            config_path = Path(args.ablation_config)
+            config = _load_json_config(config_path)
+            if config is None:
+                print(f"Error: cannot read ablation config '{config_path}'")
+            else:
+                saved = _plot_ablation_grid(methods, config, args, out_dir, formats)
+                if saved:
+                    plots_created += 1
+
+        if args.summary_config:
+            summary_path = Path(args.summary_config)
+            summary_config = _load_json_config(summary_path)
+            if summary_config is None:
+                print(f"Error: cannot read summary config '{summary_path}'")
+            else:
+                saved = _plot_train_summary(methods, summary_config, args, out_dir, formats)
+                if saved:
+                    plots_created += saved
+
+        if plots_created == 0:
+            print("No plots created! Check your data.")
+            return 1
+
+        print(f"✓ Done! Created {plots_created} plot(s) in {out_dir}/")
+        return 0
+
+    # New default: plot per-configuration curves (no averaging), for train/eval
+    print(f"Selecting best configs from {runs_dir}...")
+    best_configs = select_best_configs(
+        runs_dir,
+        lambda_forgetting=args.best_lambda,
+        prefer_eval=args.best_prefer_eval,
+    )
+    write_best_configs(best_configs, results_dir)
+    print(f"Saved best configs to {results_dir / 'best_configs'}")
+
+    modes = ['train', 'eval'] if args.mode == 'both' else [args.mode]
+    tag_prefixes = {
+        'train': 'train_reward_iqm/',
+        'eval': 'eval_reward_iqm/',
+    }
+    plots_created = 0
+
+    for mode in modes:
+        tag_prefix = tag_prefixes[mode]
+        print(f"\nCollecting per-config runs for '{mode}' (tag_prefix='{tag_prefix}')...")
+        min_points = args.min_points if mode == 'train' else args.min_points_eval
+        config_runs = _collect_config_runs(
+            runs_dir,
+            tag_prefix,
+            min_points,
+            allow_constant_step_sequence=(mode == 'eval'),
+        )
+        if not config_runs:
+            print(f"  ⚠ No runs found for '{mode}'")
+            continue
+
+        mode_out_dir = results_dir / 'plots' / mode
+        for method, configs in config_runs.items():
+            best_trial_dir = None
+            if method in best_configs:
+                best_trial_dir = best_configs[method].get('trial_dir')
+
+            plots_created += _plot_configs_for_method(
+                method=method,
+                configs=configs,
+                best_config_id=best_trial_dir,
+                out_dir=mode_out_dir,
+                title_prefix=f"{mode.title()} IQM (all configs)",
+                formats=formats,
+                task_length=args.task_length,
+                num_tasks_override=args.num_tasks,
+                ymin=args.ymin,
+                ymax=args.ymax,
+                best_only=False,
+            )
+            if best_trial_dir is not None:
+                plots_created += _plot_configs_for_method(
+                    method=method,
+                    configs=configs,
+                    best_config_id=best_trial_dir,
+                    out_dir=mode_out_dir,
+                    title_prefix=f"{mode.title()} IQM (best config)",
+                    formats=formats,
+                    task_length=args.task_length,
+                    num_tasks_override=args.num_tasks,
+                    ymin=args.ymin,
+                    ymax=args.ymax,
+                    best_only=True,
+                )
 
     if plots_created == 0:
         print("No plots created! Check your data.")
         return 1
-    
-    print(f"✓ Done! Created {plots_created} plot(s) in {out_dir}/")
+
+    print(f"✓ Done! Created {plots_created} plot(s) in {results_dir / 'plots'}/")
     return 0
 
 

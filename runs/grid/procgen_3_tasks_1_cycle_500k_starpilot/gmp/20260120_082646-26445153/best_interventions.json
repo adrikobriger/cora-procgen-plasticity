@@ -1,0 +1,562 @@
+{
+  "best": {
+    "trial": 0,
+    "timestamp": "20260120_082646",
+    "method": "gmp",
+    "params": {
+      "final_sparsity": 0.55,
+      "prune_cycle": 0,
+      "tasks_per_cycle": 3
+    },
+    "status": "ok",
+    "objective_type": "iqm",
+    "primary_metric": "iqm",
+    "objective": 0.6851851851851851,
+    "objective_stderr": 0.09799078929868855,
+    "final_mean": 1.2333333333333334,
+    "final_mean_stderr": 0.1895413567692442,
+    "final_iqm": 0.6851851851851851,
+    "final_iqm_stderr": 0.09799078929868855,
+    "final_primary": 0.6851851851851851,
+    "final_primary_stderr": 0.09799078929868855,
+    "final_mean_train": 1.2333333333333334,
+    "final_mean_train_stderr": 0.1895413567692442,
+    "final_iqm_train": 0.6851851851851851,
+    "final_iqm_train_stderr": 0.09799078929868855,
+    "final_primary_train": 0.6851851851851851,
+    "final_primary_train_stderr": 0.09799078929868855,
+    "final_mean_eval": 1.8111111111111111,
+    "final_mean_eval_stderr": 0.5945223209631887,
+    "final_iqm_eval": 1.0925925925925926,
+    "final_iqm_eval_stderr": 0.3244706568136154,
+    "final_primary_eval": 1.0925925925925926,
+    "final_primary_eval_stderr": 0.3244706568136154,
+    "forgetting_mean": -0.7111111111111112,
+    "forgetting_mean_stderr": 0.38554114606438833,
+    "forgetting_iqm": -0.25925925925925924,
+    "forgetting_iqm_stderr": 0.3533108153396095,
+    "forgetting_primary": -0.25925925925925924,
+    "forgetting_primary_stderr": 0.3533108153396095,
+    "composite": null,
+    "trial_seeds": [
+      0,
+      1,
+      2
+    ],
+    "seed_results": [
+      {
+        "seed": 0,
+        "seed_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000/seed_0",
+        "objective": 0.7222222222222222,
+        "final_mean": 1.1333333333333335,
+        "final_iqm": 0.7222222222222222,
+        "final_primary": 0.7222222222222222,
+        "final_mean_train": 1.1333333333333335,
+        "final_iqm_train": 0.7222222222222222,
+        "final_primary_train": 0.7222222222222222,
+        "final_mean_eval": 2.733333333333333,
+        "final_iqm_eval": 1.4444444444444444,
+        "final_primary_eval": 1.4444444444444444,
+        "forgetting_mean": -1.4666666666666668,
+        "forgetting_iqm": -0.8888888888888888,
+        "forgetting_primary": -0.8888888888888888,
+        "per_task_eval": [
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+            "mean": 4.0,
+            "iqm": 2.6666666666666665,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+            "mean": 0.8,
+            "iqm": 0.6666666666666666,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2_eval",
+            "mean": 3.4,
+            "iqm": 1.0,
+            "raw_returns": null
+          }
+        ],
+        "per_task_train_final": [
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+            "mean": 4.0,
+            "iqm": 3.3333333333333335,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+            "mean": 1.6,
+            "iqm": 0.6666666666666666,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+            "mean": 0.8,
+            "iqm": 0.6666666666666666,
+            "raw_returns": null
+          }
+        ],
+        "plasticity_metrics": {
+          "effective_rank": {}
+        },
+        "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000/seed_0/snapshots.json",
+        "train_task_ids": [
+          "procgen_3_tasks_1_cycle_500k_starpilot_0",
+          "procgen_3_tasks_1_cycle_500k_starpilot_1",
+          "procgen_3_tasks_1_cycle_500k_starpilot_2"
+        ],
+        "eval_task_ids": [
+          "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+          "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+          "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+        ],
+        "eval_fallback_used": false,
+        "objective_source": "train"
+      },
+      {
+        "seed": 1,
+        "seed_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000/seed_1",
+        "objective": 0.8333333333333334,
+        "final_mean": 1.5999999999999999,
+        "final_iqm": 0.8333333333333334,
+        "final_primary": 0.8333333333333334,
+        "final_mean_train": 1.5999999999999999,
+        "final_iqm_train": 0.8333333333333334,
+        "final_primary_train": 0.8333333333333334,
+        "final_mean_eval": 0.7000000000000001,
+        "final_iqm_eval": 0.4444444444444444,
+        "final_primary_eval": 0.4444444444444444,
+        "forgetting_mean": -0.4666666666666668,
+        "forgetting_iqm": 0.33333333333333326,
+        "forgetting_primary": 0.33333333333333326,
+        "per_task_eval": [
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+            "mean": 1.9,
+            "iqm": 1.3333333333333333,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+            "mean": 0.0,
+            "iqm": 0.0,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2_eval",
+            "mean": 0.2,
+            "iqm": 0.0,
+            "raw_returns": null
+          }
+        ],
+        "per_task_train_final": [
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+            "mean": 3.2,
+            "iqm": 2.3333333333333335,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+            "mean": 0.0,
+            "iqm": 0.0,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+            "mean": 3.2,
+            "iqm": 1.6666666666666667,
+            "raw_returns": null
+          }
+        ],
+        "plasticity_metrics": {
+          "effective_rank": {}
+        },
+        "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000/seed_1/snapshots.json",
+        "train_task_ids": [
+          "procgen_3_tasks_1_cycle_500k_starpilot_0",
+          "procgen_3_tasks_1_cycle_500k_starpilot_1",
+          "procgen_3_tasks_1_cycle_500k_starpilot_2"
+        ],
+        "eval_task_ids": [
+          "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+          "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+          "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+        ],
+        "eval_fallback_used": false,
+        "objective_source": "train"
+      },
+      {
+        "seed": 2,
+        "seed_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000/seed_2",
+        "objective": 0.5,
+        "final_mean": 0.9666666666666667,
+        "final_iqm": 0.5,
+        "final_primary": 0.5,
+        "final_mean_train": 0.9666666666666667,
+        "final_iqm_train": 0.5,
+        "final_primary_train": 0.5,
+        "final_mean_eval": 2.0,
+        "final_iqm_eval": 1.3888888888888886,
+        "final_primary_eval": 1.3888888888888886,
+        "forgetting_mean": -0.19999999999999996,
+        "forgetting_iqm": -0.22222222222222224,
+        "forgetting_primary": -0.22222222222222224,
+        "per_task_eval": [
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+            "mean": 2.5,
+            "iqm": 2.0,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+            "mean": 1.0,
+            "iqm": 0.6666666666666666,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2_eval",
+            "mean": 2.5,
+            "iqm": 1.5,
+            "raw_returns": null
+          }
+        ],
+        "per_task_train_final": [
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+            "mean": 0.2,
+            "iqm": 0.0,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+            "mean": 0.0,
+            "iqm": 0.0,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+            "mean": 1.4,
+            "iqm": 1.6666666666666667,
+            "raw_returns": null
+          }
+        ],
+        "plasticity_metrics": {
+          "effective_rank": {}
+        },
+        "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000/seed_2/snapshots.json",
+        "train_task_ids": [
+          "procgen_3_tasks_1_cycle_500k_starpilot_0",
+          "procgen_3_tasks_1_cycle_500k_starpilot_1",
+          "procgen_3_tasks_1_cycle_500k_starpilot_2"
+        ],
+        "eval_task_ids": [
+          "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+          "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+          "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+        ],
+        "eval_fallback_used": false,
+        "objective_source": "train"
+      }
+    ],
+    "final_eval_set": "train",
+    "train_task_ids": [
+      "procgen_3_tasks_1_cycle_500k_starpilot_0",
+      "procgen_3_tasks_1_cycle_500k_starpilot_1",
+      "procgen_3_tasks_1_cycle_500k_starpilot_2"
+    ],
+    "eval_task_ids": [
+      "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+      "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+      "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+    ],
+    "eval_fallback_used": false,
+    "output_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000"
+  },
+  "top_k": [
+    {
+      "trial": 0,
+      "timestamp": "20260120_082646",
+      "method": "gmp",
+      "params": {
+        "final_sparsity": 0.55,
+        "prune_cycle": 0,
+        "tasks_per_cycle": 3
+      },
+      "status": "ok",
+      "objective_type": "iqm",
+      "primary_metric": "iqm",
+      "objective": 0.6851851851851851,
+      "objective_stderr": 0.09799078929868855,
+      "final_mean": 1.2333333333333334,
+      "final_mean_stderr": 0.1895413567692442,
+      "final_iqm": 0.6851851851851851,
+      "final_iqm_stderr": 0.09799078929868855,
+      "final_primary": 0.6851851851851851,
+      "final_primary_stderr": 0.09799078929868855,
+      "final_mean_train": 1.2333333333333334,
+      "final_mean_train_stderr": 0.1895413567692442,
+      "final_iqm_train": 0.6851851851851851,
+      "final_iqm_train_stderr": 0.09799078929868855,
+      "final_primary_train": 0.6851851851851851,
+      "final_primary_train_stderr": 0.09799078929868855,
+      "final_mean_eval": 1.8111111111111111,
+      "final_mean_eval_stderr": 0.5945223209631887,
+      "final_iqm_eval": 1.0925925925925926,
+      "final_iqm_eval_stderr": 0.3244706568136154,
+      "final_primary_eval": 1.0925925925925926,
+      "final_primary_eval_stderr": 0.3244706568136154,
+      "forgetting_mean": -0.7111111111111112,
+      "forgetting_mean_stderr": 0.38554114606438833,
+      "forgetting_iqm": -0.25925925925925924,
+      "forgetting_iqm_stderr": 0.3533108153396095,
+      "forgetting_primary": -0.25925925925925924,
+      "forgetting_primary_stderr": 0.3533108153396095,
+      "composite": null,
+      "trial_seeds": [
+        0,
+        1,
+        2
+      ],
+      "seed_results": [
+        {
+          "seed": 0,
+          "seed_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000/seed_0",
+          "objective": 0.7222222222222222,
+          "final_mean": 1.1333333333333335,
+          "final_iqm": 0.7222222222222222,
+          "final_primary": 0.7222222222222222,
+          "final_mean_train": 1.1333333333333335,
+          "final_iqm_train": 0.7222222222222222,
+          "final_primary_train": 0.7222222222222222,
+          "final_mean_eval": 2.733333333333333,
+          "final_iqm_eval": 1.4444444444444444,
+          "final_primary_eval": 1.4444444444444444,
+          "forgetting_mean": -1.4666666666666668,
+          "forgetting_iqm": -0.8888888888888888,
+          "forgetting_primary": -0.8888888888888888,
+          "per_task_eval": [
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+              "mean": 4.0,
+              "iqm": 2.6666666666666665,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+              "mean": 0.8,
+              "iqm": 0.6666666666666666,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2_eval",
+              "mean": 3.4,
+              "iqm": 1.0,
+              "raw_returns": null
+            }
+          ],
+          "per_task_train_final": [
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+              "mean": 4.0,
+              "iqm": 3.3333333333333335,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+              "mean": 1.6,
+              "iqm": 0.6666666666666666,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+              "mean": 0.8,
+              "iqm": 0.6666666666666666,
+              "raw_returns": null
+            }
+          ],
+          "plasticity_metrics": {
+            "effective_rank": {}
+          },
+          "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000/seed_0/snapshots.json",
+          "train_task_ids": [
+            "procgen_3_tasks_1_cycle_500k_starpilot_0",
+            "procgen_3_tasks_1_cycle_500k_starpilot_1",
+            "procgen_3_tasks_1_cycle_500k_starpilot_2"
+          ],
+          "eval_task_ids": [
+            "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+            "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+            "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+          ],
+          "eval_fallback_used": false,
+          "objective_source": "train"
+        },
+        {
+          "seed": 1,
+          "seed_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000/seed_1",
+          "objective": 0.8333333333333334,
+          "final_mean": 1.5999999999999999,
+          "final_iqm": 0.8333333333333334,
+          "final_primary": 0.8333333333333334,
+          "final_mean_train": 1.5999999999999999,
+          "final_iqm_train": 0.8333333333333334,
+          "final_primary_train": 0.8333333333333334,
+          "final_mean_eval": 0.7000000000000001,
+          "final_iqm_eval": 0.4444444444444444,
+          "final_primary_eval": 0.4444444444444444,
+          "forgetting_mean": -0.4666666666666668,
+          "forgetting_iqm": 0.33333333333333326,
+          "forgetting_primary": 0.33333333333333326,
+          "per_task_eval": [
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+              "mean": 1.9,
+              "iqm": 1.3333333333333333,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+              "mean": 0.0,
+              "iqm": 0.0,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2_eval",
+              "mean": 0.2,
+              "iqm": 0.0,
+              "raw_returns": null
+            }
+          ],
+          "per_task_train_final": [
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+              "mean": 3.2,
+              "iqm": 2.3333333333333335,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+              "mean": 0.0,
+              "iqm": 0.0,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+              "mean": 3.2,
+              "iqm": 1.6666666666666667,
+              "raw_returns": null
+            }
+          ],
+          "plasticity_metrics": {
+            "effective_rank": {}
+          },
+          "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000/seed_1/snapshots.json",
+          "train_task_ids": [
+            "procgen_3_tasks_1_cycle_500k_starpilot_0",
+            "procgen_3_tasks_1_cycle_500k_starpilot_1",
+            "procgen_3_tasks_1_cycle_500k_starpilot_2"
+          ],
+          "eval_task_ids": [
+            "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+            "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+            "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+          ],
+          "eval_fallback_used": false,
+          "objective_source": "train"
+        },
+        {
+          "seed": 2,
+          "seed_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000/seed_2",
+          "objective": 0.5,
+          "final_mean": 0.9666666666666667,
+          "final_iqm": 0.5,
+          "final_primary": 0.5,
+          "final_mean_train": 0.9666666666666667,
+          "final_iqm_train": 0.5,
+          "final_primary_train": 0.5,
+          "final_mean_eval": 2.0,
+          "final_iqm_eval": 1.3888888888888886,
+          "final_primary_eval": 1.3888888888888886,
+          "forgetting_mean": -0.19999999999999996,
+          "forgetting_iqm": -0.22222222222222224,
+          "forgetting_primary": -0.22222222222222224,
+          "per_task_eval": [
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+              "mean": 2.5,
+              "iqm": 2.0,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+              "mean": 1.0,
+              "iqm": 0.6666666666666666,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2_eval",
+              "mean": 2.5,
+              "iqm": 1.5,
+              "raw_returns": null
+            }
+          ],
+          "per_task_train_final": [
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+              "mean": 0.2,
+              "iqm": 0.0,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+              "mean": 0.0,
+              "iqm": 0.0,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+              "mean": 1.4,
+              "iqm": 1.6666666666666667,
+              "raw_returns": null
+            }
+          ],
+          "plasticity_metrics": {
+            "effective_rank": {}
+          },
+          "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000/seed_2/snapshots.json",
+          "train_task_ids": [
+            "procgen_3_tasks_1_cycle_500k_starpilot_0",
+            "procgen_3_tasks_1_cycle_500k_starpilot_1",
+            "procgen_3_tasks_1_cycle_500k_starpilot_2"
+          ],
+          "eval_task_ids": [
+            "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+            "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+            "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+          ],
+          "eval_fallback_used": false,
+          "objective_source": "train"
+        }
+      ],
+      "final_eval_set": "train",
+      "train_task_ids": [
+        "procgen_3_tasks_1_cycle_500k_starpilot_0",
+        "procgen_3_tasks_1_cycle_500k_starpilot_1",
+        "procgen_3_tasks_1_cycle_500k_starpilot_2"
+      ],
+      "eval_task_ids": [
+        "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+        "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+        "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+      ],
+      "eval_fallback_used": false,
+      "output_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445153/trial_000"
+    }
+  ]
+}

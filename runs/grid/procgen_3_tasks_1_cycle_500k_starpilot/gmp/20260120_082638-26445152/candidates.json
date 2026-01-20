@@ -1,0 +1,12 @@
+{
+  "method": "gmp",
+  "search": "grid",
+  "seed": 0,
+  "candidates": [
+    {
+      "final_sparsity": 0.5,
+      "prune_cycle": 0,
+      "tasks_per_cycle": 3
+    }
+  ]
+}

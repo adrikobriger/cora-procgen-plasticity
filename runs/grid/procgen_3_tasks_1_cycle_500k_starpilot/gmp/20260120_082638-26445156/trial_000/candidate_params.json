@@ -1,0 +1,8 @@
+{
+  "trial": 0,
+  "params": {
+    "final_sparsity": 0.7,
+    "prune_cycle": 0,
+    "tasks_per_cycle": 3
+  }
+}

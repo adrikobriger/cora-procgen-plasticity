@@ -1,0 +1,564 @@
+{
+  "best": {
+    "trial": 0,
+    "timestamp": "20260120_083142",
+    "method": "set",
+    "params": {
+      "target_sparsity": 0.6,
+      "update_interval": 10,
+      "prune_fraction": 0.2,
+      "warmup_steps": 0.0
+    },
+    "status": "ok",
+    "objective_type": "iqm",
+    "primary_metric": "iqm",
+    "objective": 0.7962962962962963,
+    "objective_stderr": 0.17665540766980478,
+    "final_mean": 1.4444444444444444,
+    "final_mean_stderr": 0.49901136828634707,
+    "final_iqm": 0.7962962962962963,
+    "final_iqm_stderr": 0.17665540766980478,
+    "final_primary": 0.7962962962962963,
+    "final_primary_stderr": 0.17665540766980478,
+    "final_mean_train": 1.4444444444444444,
+    "final_mean_train_stderr": 0.49901136828634707,
+    "final_iqm_train": 0.7962962962962963,
+    "final_iqm_train_stderr": 0.17665540766980478,
+    "final_primary_train": 0.7962962962962963,
+    "final_primary_train_stderr": 0.17665540766980478,
+    "final_mean_eval": 1.4555555555555555,
+    "final_mean_eval_stderr": 0.5165173021853092,
+    "final_iqm_eval": 0.7592592592592592,
+    "final_iqm_eval_stderr": 0.26707787225659185,
+    "final_primary_eval": 0.7592592592592592,
+    "final_primary_eval_stderr": 0.26707787225659185,
+    "forgetting_mean": 0.4777777777777778,
+    "forgetting_mean_stderr": 0.49603365078999373,
+    "forgetting_iqm": 1.1666666666666667,
+    "forgetting_iqm_stderr": 0.6144688897421133,
+    "forgetting_primary": 1.1666666666666667,
+    "forgetting_primary_stderr": 0.6144688897421133,
+    "composite": null,
+    "trial_seeds": [
+      0,
+      1,
+      2
+    ],
+    "seed_results": [
+      {
+        "seed": 0,
+        "seed_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000/seed_0",
+        "objective": 0.5,
+        "final_mean": 0.8333333333333334,
+        "final_iqm": 0.5,
+        "final_primary": 0.5,
+        "final_mean_train": 0.8333333333333334,
+        "final_iqm_train": 0.5,
+        "final_primary_train": 0.5,
+        "final_mean_eval": 1.1333333333333333,
+        "final_iqm_eval": 0.611111111111111,
+        "final_primary_eval": 0.611111111111111,
+        "forgetting_mean": 1.4000000000000001,
+        "forgetting_iqm": 1.888888888888889,
+        "forgetting_primary": 1.888888888888889,
+        "per_task_eval": [
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+            "mean": 1.4,
+            "iqm": 0.5,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+            "mean": 1.6,
+            "iqm": 1.3333333333333333,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2_eval",
+            "mean": 0.4,
+            "iqm": 0.0,
+            "raw_returns": null
+          }
+        ],
+        "per_task_train_final": [
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+            "mean": 0.2,
+            "iqm": 0.0,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+            "mean": 0.8,
+            "iqm": 0.0,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+            "mean": 0.8,
+            "iqm": 0.3333333333333333,
+            "raw_returns": null
+          }
+        ],
+        "plasticity_metrics": {
+          "effective_rank": {}
+        },
+        "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000/seed_0/snapshots.json",
+        "train_task_ids": [
+          "procgen_3_tasks_1_cycle_500k_starpilot_0",
+          "procgen_3_tasks_1_cycle_500k_starpilot_1",
+          "procgen_3_tasks_1_cycle_500k_starpilot_2"
+        ],
+        "eval_task_ids": [
+          "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+          "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+          "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+        ],
+        "eval_fallback_used": false,
+        "objective_source": "train"
+      },
+      {
+        "seed": 1,
+        "seed_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000/seed_1",
+        "objective": 0.7777777777777777,
+        "final_mean": 1.0666666666666667,
+        "final_iqm": 0.7777777777777777,
+        "final_primary": 0.7777777777777777,
+        "final_mean_train": 1.0666666666666667,
+        "final_iqm_train": 0.7777777777777777,
+        "final_primary_train": 0.7777777777777777,
+        "final_mean_eval": 0.7666666666666667,
+        "final_iqm_eval": 0.3888888888888889,
+        "final_primary_eval": 0.3888888888888889,
+        "forgetting_mean": -0.3,
+        "forgetting_iqm": -0.055555555555555504,
+        "forgetting_primary": -0.055555555555555504,
+        "per_task_eval": [
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+            "mean": 1.5,
+            "iqm": 1.1666666666666667,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+            "mean": 0.6,
+            "iqm": 0.0,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2_eval",
+            "mean": 0.2,
+            "iqm": 0.0,
+            "raw_returns": null
+          }
+        ],
+        "per_task_train_final": [
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+            "mean": 1.4,
+            "iqm": 0.6666666666666666,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+            "mean": 1.6,
+            "iqm": 1.3333333333333333,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+            "mean": 1.4,
+            "iqm": 1.6666666666666667,
+            "raw_returns": null
+          }
+        ],
+        "plasticity_metrics": {
+          "effective_rank": {}
+        },
+        "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000/seed_1/snapshots.json",
+        "train_task_ids": [
+          "procgen_3_tasks_1_cycle_500k_starpilot_0",
+          "procgen_3_tasks_1_cycle_500k_starpilot_1",
+          "procgen_3_tasks_1_cycle_500k_starpilot_2"
+        ],
+        "eval_task_ids": [
+          "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+          "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+          "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+        ],
+        "eval_fallback_used": false,
+        "objective_source": "train"
+      },
+      {
+        "seed": 2,
+        "seed_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000/seed_2",
+        "objective": 1.1111111111111112,
+        "final_mean": 2.433333333333333,
+        "final_iqm": 1.1111111111111112,
+        "final_primary": 1.1111111111111112,
+        "final_mean_train": 2.433333333333333,
+        "final_iqm_train": 1.1111111111111112,
+        "final_primary_train": 1.1111111111111112,
+        "final_mean_eval": 2.4666666666666663,
+        "final_iqm_eval": 1.277777777777778,
+        "final_primary_eval": 1.277777777777778,
+        "forgetting_mean": 0.3333333333333333,
+        "forgetting_iqm": 1.6666666666666667,
+        "forgetting_primary": 1.6666666666666667,
+        "per_task_eval": [
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+            "mean": 0.1,
+            "iqm": 0.0,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+            "mean": 0.0,
+            "iqm": 0.0,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2_eval",
+            "mean": 7.3,
+            "iqm": 3.8333333333333335,
+            "raw_returns": null
+          }
+        ],
+        "per_task_train_final": [
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+            "mean": 0.4,
+            "iqm": 0.0,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+            "mean": 0.0,
+            "iqm": 0.0,
+            "raw_returns": null
+          },
+          {
+            "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+            "mean": 6.6,
+            "iqm": 3.0,
+            "raw_returns": null
+          }
+        ],
+        "plasticity_metrics": {
+          "effective_rank": {}
+        },
+        "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000/seed_2/snapshots.json",
+        "train_task_ids": [
+          "procgen_3_tasks_1_cycle_500k_starpilot_0",
+          "procgen_3_tasks_1_cycle_500k_starpilot_1",
+          "procgen_3_tasks_1_cycle_500k_starpilot_2"
+        ],
+        "eval_task_ids": [
+          "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+          "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+          "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+        ],
+        "eval_fallback_used": false,
+        "objective_source": "train"
+      }
+    ],
+    "final_eval_set": "train",
+    "train_task_ids": [
+      "procgen_3_tasks_1_cycle_500k_starpilot_0",
+      "procgen_3_tasks_1_cycle_500k_starpilot_1",
+      "procgen_3_tasks_1_cycle_500k_starpilot_2"
+    ],
+    "eval_task_ids": [
+      "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+      "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+      "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+    ],
+    "eval_fallback_used": false,
+    "output_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000"
+  },
+  "top_k": [
+    {
+      "trial": 0,
+      "timestamp": "20260120_083142",
+      "method": "set",
+      "params": {
+        "target_sparsity": 0.6,
+        "update_interval": 10,
+        "prune_fraction": 0.2,
+        "warmup_steps": 0.0
+      },
+      "status": "ok",
+      "objective_type": "iqm",
+      "primary_metric": "iqm",
+      "objective": 0.7962962962962963,
+      "objective_stderr": 0.17665540766980478,
+      "final_mean": 1.4444444444444444,
+      "final_mean_stderr": 0.49901136828634707,
+      "final_iqm": 0.7962962962962963,
+      "final_iqm_stderr": 0.17665540766980478,
+      "final_primary": 0.7962962962962963,
+      "final_primary_stderr": 0.17665540766980478,
+      "final_mean_train": 1.4444444444444444,
+      "final_mean_train_stderr": 0.49901136828634707,
+      "final_iqm_train": 0.7962962962962963,
+      "final_iqm_train_stderr": 0.17665540766980478,
+      "final_primary_train": 0.7962962962962963,
+      "final_primary_train_stderr": 0.17665540766980478,
+      "final_mean_eval": 1.4555555555555555,
+      "final_mean_eval_stderr": 0.5165173021853092,
+      "final_iqm_eval": 0.7592592592592592,
+      "final_iqm_eval_stderr": 0.26707787225659185,
+      "final_primary_eval": 0.7592592592592592,
+      "final_primary_eval_stderr": 0.26707787225659185,
+      "forgetting_mean": 0.4777777777777778,
+      "forgetting_mean_stderr": 0.49603365078999373,
+      "forgetting_iqm": 1.1666666666666667,
+      "forgetting_iqm_stderr": 0.6144688897421133,
+      "forgetting_primary": 1.1666666666666667,
+      "forgetting_primary_stderr": 0.6144688897421133,
+      "composite": null,
+      "trial_seeds": [
+        0,
+        1,
+        2
+      ],
+      "seed_results": [
+        {
+          "seed": 0,
+          "seed_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000/seed_0",
+          "objective": 0.5,
+          "final_mean": 0.8333333333333334,
+          "final_iqm": 0.5,
+          "final_primary": 0.5,
+          "final_mean_train": 0.8333333333333334,
+          "final_iqm_train": 0.5,
+          "final_primary_train": 0.5,
+          "final_mean_eval": 1.1333333333333333,
+          "final_iqm_eval": 0.611111111111111,
+          "final_primary_eval": 0.611111111111111,
+          "forgetting_mean": 1.4000000000000001,
+          "forgetting_iqm": 1.888888888888889,
+          "forgetting_primary": 1.888888888888889,
+          "per_task_eval": [
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+              "mean": 1.4,
+              "iqm": 0.5,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+              "mean": 1.6,
+              "iqm": 1.3333333333333333,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2_eval",
+              "mean": 0.4,
+              "iqm": 0.0,
+              "raw_returns": null
+            }
+          ],
+          "per_task_train_final": [
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+              "mean": 0.2,
+              "iqm": 0.0,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+              "mean": 0.8,
+              "iqm": 0.0,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+              "mean": 0.8,
+              "iqm": 0.3333333333333333,
+              "raw_returns": null
+            }
+          ],
+          "plasticity_metrics": {
+            "effective_rank": {}
+          },
+          "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000/seed_0/snapshots.json",
+          "train_task_ids": [
+            "procgen_3_tasks_1_cycle_500k_starpilot_0",
+            "procgen_3_tasks_1_cycle_500k_starpilot_1",
+            "procgen_3_tasks_1_cycle_500k_starpilot_2"
+          ],
+          "eval_task_ids": [
+            "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+            "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+            "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+          ],
+          "eval_fallback_used": false,
+          "objective_source": "train"
+        },
+        {
+          "seed": 1,
+          "seed_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000/seed_1",
+          "objective": 0.7777777777777777,
+          "final_mean": 1.0666666666666667,
+          "final_iqm": 0.7777777777777777,
+          "final_primary": 0.7777777777777777,
+          "final_mean_train": 1.0666666666666667,
+          "final_iqm_train": 0.7777777777777777,
+          "final_primary_train": 0.7777777777777777,
+          "final_mean_eval": 0.7666666666666667,
+          "final_iqm_eval": 0.3888888888888889,
+          "final_primary_eval": 0.3888888888888889,
+          "forgetting_mean": -0.3,
+          "forgetting_iqm": -0.055555555555555504,
+          "forgetting_primary": -0.055555555555555504,
+          "per_task_eval": [
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+              "mean": 1.5,
+              "iqm": 1.1666666666666667,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+              "mean": 0.6,
+              "iqm": 0.0,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2_eval",
+              "mean": 0.2,
+              "iqm": 0.0,
+              "raw_returns": null
+            }
+          ],
+          "per_task_train_final": [
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+              "mean": 1.4,
+              "iqm": 0.6666666666666666,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+              "mean": 1.6,
+              "iqm": 1.3333333333333333,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+              "mean": 1.4,
+              "iqm": 1.6666666666666667,
+              "raw_returns": null
+            }
+          ],
+          "plasticity_metrics": {
+            "effective_rank": {}
+          },
+          "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000/seed_1/snapshots.json",
+          "train_task_ids": [
+            "procgen_3_tasks_1_cycle_500k_starpilot_0",
+            "procgen_3_tasks_1_cycle_500k_starpilot_1",
+            "procgen_3_tasks_1_cycle_500k_starpilot_2"
+          ],
+          "eval_task_ids": [
+            "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+            "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+            "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+          ],
+          "eval_fallback_used": false,
+          "objective_source": "train"
+        },
+        {
+          "seed": 2,
+          "seed_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000/seed_2",
+          "objective": 1.1111111111111112,
+          "final_mean": 2.433333333333333,
+          "final_iqm": 1.1111111111111112,
+          "final_primary": 1.1111111111111112,
+          "final_mean_train": 2.433333333333333,
+          "final_iqm_train": 1.1111111111111112,
+          "final_primary_train": 1.1111111111111112,
+          "final_mean_eval": 2.4666666666666663,
+          "final_iqm_eval": 1.277777777777778,
+          "final_primary_eval": 1.277777777777778,
+          "forgetting_mean": 0.3333333333333333,
+          "forgetting_iqm": 1.6666666666666667,
+          "forgetting_primary": 1.6666666666666667,
+          "per_task_eval": [
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+              "mean": 0.1,
+              "iqm": 0.0,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+              "mean": 0.0,
+              "iqm": 0.0,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2_eval",
+              "mean": 7.3,
+              "iqm": 3.8333333333333335,
+              "raw_returns": null
+            }
+          ],
+          "per_task_train_final": [
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_0",
+              "mean": 0.4,
+              "iqm": 0.0,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_1",
+              "mean": 0.0,
+              "iqm": 0.0,
+              "raw_returns": null
+            },
+            {
+              "task_id": "procgen_3_tasks_1_cycle_500k_starpilot_2",
+              "mean": 6.6,
+              "iqm": 3.0,
+              "raw_returns": null
+            }
+          ],
+          "plasticity_metrics": {
+            "effective_rank": {}
+          },
+          "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000/seed_2/snapshots.json",
+          "train_task_ids": [
+            "procgen_3_tasks_1_cycle_500k_starpilot_0",
+            "procgen_3_tasks_1_cycle_500k_starpilot_1",
+            "procgen_3_tasks_1_cycle_500k_starpilot_2"
+          ],
+          "eval_task_ids": [
+            "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+            "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+            "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+          ],
+          "eval_fallback_used": false,
+          "objective_source": "train"
+        }
+      ],
+      "final_eval_set": "train",
+      "train_task_ids": [
+        "procgen_3_tasks_1_cycle_500k_starpilot_0",
+        "procgen_3_tasks_1_cycle_500k_starpilot_1",
+        "procgen_3_tasks_1_cycle_500k_starpilot_2"
+      ],
+      "eval_task_ids": [
+        "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+        "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+        "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+      ],
+      "eval_fallback_used": false,
+      "output_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_083142-26445206/trial_000"
+    }
+  ]
+}

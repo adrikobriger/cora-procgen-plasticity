@@ -1,0 +1,16 @@
+{
+  "method": "GMP",
+  "trial_dir": "runs\\grid\\procgen_3_tasks_1_cycle_500k_starpilot\\gmp\\20260120_082732-26445165\\trial_000",
+  "avg_score": 1.8055555555555556,
+  "lambda_forgetting": 0.5,
+  "prefer_eval": false,
+  "scores": [
+    0.41666666666666663,
+    3.1944444444444446
+  ],
+  "params": {
+    "final_sparsity": 0.95,
+    "prune_cycle": 0,
+    "tasks_per_cycle": 3
+  }
+}

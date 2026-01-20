@@ -1,0 +1,13 @@
+{
+  "method": "set",
+  "search": "grid",
+  "seed": 0,
+  "candidates": [
+    {
+      "target_sparsity": 0.6,
+      "update_interval": 40,
+      "prune_fraction": 0.1,
+      "warmup_steps": 0.03
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "seed": 0,
+  "params": {
+    "target_sparsity": 0.6,
+    "update_interval": 10,
+    "prune_fraction": 0.1,
+    "warmup_steps": 0.03
+  },
+  "objective_type": "iqm",
+  "primary_metric": "iqm",
+  "final_eval_set": "train",
+  "objective_source": "train",
+  "objective": 0.5,
+  "final_mean": 0.6666666666666666,
+  "final_iqm": 0.5,
+  "final_primary": 0.5,
+  "final_mean_train": 0.6666666666666666,
+  "final_iqm_train": 0.5,
+  "final_primary_train": 0.5,
+  "final_mean_eval": 1.6666666666666667,
+  "final_iqm_eval": 1.4444444444444446,
+  "final_primary_eval": 1.4444444444444446,
+  "forgetting_mean": 0.8000000000000002,
+  "forgetting_iqm": 1.2222222222222223,
+  "forgetting_primary": 1.2222222222222223,
+  "eval_mode": "final_only",
+  "train_task_ids": [
+    "procgen_3_tasks_1_cycle_500k_starpilot_0",
+    "procgen_3_tasks_1_cycle_500k_starpilot_1",
+    "procgen_3_tasks_1_cycle_500k_starpilot_2"
+  ],
+  "eval_task_ids": [
+    "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+    "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+    "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+  ],
+  "eval_fallback_used": false,
+  "snapshots_path": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_082736-26445173/trial_000/seed_0/snapshots.json",
+  "tb_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/set/20260120_082736-26445173/trial_000/seed_0/tb"
+}

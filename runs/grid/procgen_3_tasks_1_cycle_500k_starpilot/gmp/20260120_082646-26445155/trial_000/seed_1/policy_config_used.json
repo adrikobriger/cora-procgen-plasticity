@@ -1,0 +1,32 @@
+{
+  "_output_dir": "runs/grid/procgen_3_tasks_1_cycle_500k_starpilot/gmp/20260120_082646-26445155/trial_000/seed_1",
+  "timesteps_per_save": 30000.0,
+  "eps": 1e-05,
+  "learning_rate": 0.0003,
+  "gamma": 0.9917490109368313,
+  "use_gae": true,
+  "gae_lambda": 0.9225455707226197,
+  "entropy_coef": 0.0005763308777096957,
+  "value_loss_coef": 1.5726573572751419,
+  "max_grad_norm": 1.5407139720422187,
+  "num_processes": 6,
+  "num_steps": 128,
+  "ppo_epoch": 3,
+  "num_mini_batch": 4,
+  "clip_param": 0.20093737116347804,
+  "use_proper_time_limits": false,
+  "recurrent_policy": false,
+  "use_linear_lr_decay": false,
+  "decay_over_steps": 10000000,
+  "cuda": true,
+  "render_collection_freq": 200000,
+  "comment": "",
+  "clip_reward": true,
+  "intervention_type": "gmp",
+  "intervention_params": {
+    "final_sparsity": 0.65,
+    "prune_cycle": 0,
+    "tasks_per_cycle": 3,
+    "total_train_steps": 23448
+  }
+}

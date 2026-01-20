@@ -305,6 +305,12 @@ def _select_scoring_tasks(experiment: Any, score_tasks: str) -> Tuple[List[Any],
         return eval_tasks, False
     return all_tasks, True
 
+def _estimate_total_train_timesteps(experiment: Any) -> int:
+    tasks = [t for t in getattr(experiment, "tasks", []) if _is_train_task(t)]
+    if not tasks:
+        tasks = list(getattr(experiment, "tasks", []))
+    cycle_count = int(getattr(experiment, "_cycle_count", 1) or 1)
+    return int(sum(_task_timesteps(t) for t in tasks) * cycle_count)
 
 # -------------------------
 # Evaluation helpers
@@ -312,6 +318,7 @@ def _select_scoring_tasks(experiment: Any, score_tasks: str) -> Tuple[List[Any],
 
 def _extract_rewards_from_eval_info(info: Any) -> List[float]:
     rewards: List[float] = []
+    timestep_log_offset: int = 0,
     if info is None:
         return rewards
 
@@ -321,7 +328,7 @@ def _extract_rewards_from_eval_info(info: Any) -> List[float]:
     if isinstance(info, dict):
         for key in ["episode_returns", "returns", "episode_return", "reward", "rewards"]:
             if key in info:
-                val = info[key]
+            timestep_log_offset=timestep_log_offset,
                 if isinstance(val, (list, tuple, np.ndarray)):
                     rewards.extend([float(x) for x in val])
                 elif isinstance(val, (int, float)):
@@ -333,6 +340,7 @@ def _extract_rewards_from_eval_info(info: Any) -> List[float]:
         rewards.extend([float(x) for x in info])
         return rewards
 
+    timestep_log_offset: int = 0,
     if isinstance(info, (int, float)):
         rewards.append(float(info))
         return rewards
@@ -341,7 +349,7 @@ def _extract_rewards_from_eval_info(info: Any) -> List[float]:
 
 
 def _evaluate_with_taskspec(
-    experiment: Any,
+            timestep_log_offset=timestep_log_offset,
     policy: Any,
     summary_writer: SummaryWriter,
     episodes_per_task: int,
@@ -350,18 +358,20 @@ def _evaluate_with_taskspec(
     """
     Preferred evaluation: build a TaskSpec with return_after_episode_num=E and run task._run.
     This matches your intervention tuner style and is usually more reliable than continual_eval.
+    timestep_log_offset: int = 0,
     """
     per_task: List[Dict[str, Any]] = []
 
     for task in tasks:
         returns: List[float] = []
 
-        # Build an eval TaskSpec based on the task's spec.
+            per_task = _evaluate_with_taskspec(
         ts = getattr(task, "_task_spec", None)
         if ts is None:
             raise RuntimeError("Task has no _task_spec; cannot use TaskSpec evaluation.")
 
-        eval_spec = TaskSpec(
+            tasks=tasks,
+            timestep_log_offset=timestep_log_offset,
             task_id=task.task_id,
             action_space_id=task.action_space_id,
             preprocessor=ts.preprocessor,
@@ -472,9 +482,23 @@ def evaluate_policy_on_tasks(
             per_task = _evaluate_with_taskspec(experiment, policy, summary_writer, episodes_per_task, tasks)
         except Exception:
             # Fallback
-            per_task = _evaluate_with_continual_eval(experiment, policy, summary_writer, episodes_per_task, tasks)
+            per_task = _evaluate_with_continual_eval(
+                experiment,
+                policy,
+                summary_writer,
+                episodes_per_task,
+                tasks,
+                timestep_log_offset=timestep_log_offset,
+            )
     else:
-        per_task = _evaluate_with_continual_eval(experiment, policy, summary_writer, episodes_per_task, tasks)
+        per_task = _evaluate_with_continual_eval(
+            experiment,
+            policy,
+            summary_writer,
+            episodes_per_task,
+            tasks,
+            timestep_log_offset=timestep_log_offset,
+        )
 
     mean_over_tasks = _nanmean([t["mean"] for t in per_task]) if per_task else float("nan")
     iqm_over_tasks = _nanmean([t["iqm"] for t in per_task]) if per_task else float("nan")
@@ -737,6 +761,7 @@ def run_trial(
         if args.eval_mode != "none":
             print(f"[Trial {trial_idx:03d} | Seed {seed}] Scoring PPO on tasks ({args.score_tasks}) "
                   f"with {args.episodes_per_task} eps/task...")
+            eval_timestep_offset = _estimate_total_train_timesteps(experiment)
             per_task, aggregates = evaluate_policy_on_tasks(
                 experiment=experiment,
                 policy=policy,
@@ -744,6 +769,7 @@ def run_trial(
                 episodes_per_task=args.episodes_per_task,
                 objective_metric=args.objective,
                 tasks=scoring_tasks,
+                timestep_log_offset=eval_timestep_offset,
             )
 
         writer.flush()

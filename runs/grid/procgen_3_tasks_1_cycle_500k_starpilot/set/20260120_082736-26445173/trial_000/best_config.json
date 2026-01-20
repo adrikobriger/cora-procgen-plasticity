@@ -1,0 +1,54 @@
+{
+  "method": "set",
+  "params": {
+    "target_sparsity": 0.6,
+    "update_interval": 10,
+    "prune_fraction": 0.1,
+    "warmup_steps": 0.03
+  },
+  "objective_type": "iqm",
+  "primary_metric": "iqm",
+  "objective": 0.9444444444444443,
+  "objective_stderr": 0.4169751944147298,
+  "final_mean": 1.211111111111111,
+  "final_mean_stderr": 0.46361435655611255,
+  "final_iqm": 0.9444444444444443,
+  "final_iqm_stderr": 0.4169751944147298,
+  "final_primary": 0.9444444444444443,
+  "final_primary_stderr": 0.4169751944147298,
+  "final_mean_train": 1.211111111111111,
+  "final_mean_train_stderr": 0.46361435655611255,
+  "final_iqm_train": 0.9444444444444443,
+  "final_iqm_train_stderr": 0.4169751944147298,
+  "final_primary_train": 0.9444444444444443,
+  "final_primary_train_stderr": 0.4169751944147298,
+  "final_mean_eval": 1.7222222222222223,
+  "final_mean_eval_stderr": 0.28043176586942137,
+  "final_iqm_eval": 1.3888888888888886,
+  "final_iqm_eval_stderr": 0.24216105241892635,
+  "final_primary_eval": 1.3888888888888886,
+  "final_primary_eval_stderr": 0.24216105241892635,
+  "forgetting_mean": 0.6333333333333334,
+  "forgetting_mean_stderr": 0.4788102539203388,
+  "forgetting_iqm": 0.8703703703703706,
+  "forgetting_iqm_stderr": 0.4972489474850945,
+  "forgetting_primary": 0.8703703703703706,
+  "forgetting_primary_stderr": 0.4972489474850945,
+  "trial_seeds": [
+    0,
+    1,
+    2
+  ],
+  "final_eval_set": "train",
+  "train_task_ids": [
+    "procgen_3_tasks_1_cycle_500k_starpilot_0",
+    "procgen_3_tasks_1_cycle_500k_starpilot_1",
+    "procgen_3_tasks_1_cycle_500k_starpilot_2"
+  ],
+  "eval_task_ids": [
+    "procgen_3_tasks_1_cycle_500k_starpilot_0_eval",
+    "procgen_3_tasks_1_cycle_500k_starpilot_1_eval",
+    "procgen_3_tasks_1_cycle_500k_starpilot_2_eval"
+  ],
+  "eval_fallback_used": false
+}

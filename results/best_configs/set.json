@@ -1,0 +1,18 @@
+{
+  "method": "SET",
+  "trial_dir": "runs\\grid\\procgen_3_tasks_1_cycle_500k_starpilot\\set\\20260120_082735-26445172\\trial_000",
+  "avg_score": 0.7222222222222223,
+  "lambda_forgetting": 0.5,
+  "prefer_eval": false,
+  "scores": [
+    1.1666666666666667,
+    0.8055555555555556,
+    0.19444444444444442
+  ],
+  "params": {
+    "target_sparsity": 0.6,
+    "update_interval": 10,
+    "prune_fraction": 0.1,
+    "warmup_steps": 0.0
+  }
+}

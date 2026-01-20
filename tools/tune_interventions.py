@@ -453,6 +453,7 @@ def evaluate_policy_on_tasks(
     objective_metric: str,
     include_raw_returns: bool = False,
     tasks_override: Optional[List[Any]] = None,
+    timestep_log_offset: int = 0,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, float]]:
 
     per_task = []
@@ -483,7 +484,7 @@ def evaluate_policy_on_tasks(
             policy=policy,
             summary_writer=summary_writer,
             output_dir=experiment.output_dir,
-            timestep_log_offset=0,
+            timestep_log_offset=timestep_log_offset,
             wait_to_report=False,
             log_with_task_timestep=False,
             reward_tag="eval_reward",
@@ -921,7 +922,7 @@ def _run_single_seed(
     total_train_timesteps = 0
     cycle_count = getattr(experiment, "_cycle_count", 1) or 1
 
-    def run_snapshot(cycle_id: int, task_run_idx: int, label: str):
+    def run_snapshot(cycle_id: int, task_run_idx: int, label: str, timestep_log_offset: int):
         snap_per_task, snap_aggs = evaluate_policy_on_tasks(
             experiment,
             policy,
@@ -930,6 +931,7 @@ def _run_single_seed(
             objective_metric=args.primary_metric,   # store both aggs but choose a consistent metric label
             include_raw_returns=args.save_raw_returns,
             tasks_override=train_tasks,
+            timestep_log_offset=int(timestep_log_offset),
         )
         snapshots.append({
             "cycle": cycle_id,
@@ -942,7 +944,7 @@ def _run_single_seed(
         })
 
     # Initial snapshot (pre-train)
-    run_snapshot(cycle_id=0, task_run_idx=-1, label="pre_train")
+    run_snapshot(cycle_id=0, task_run_idx=-1, label="pre_train", timestep_log_offset=0)
 
     for cycle_id in range(cycle_count):
         for task_run_idx, task in enumerate(train_tasks):
@@ -963,7 +965,7 @@ def _run_single_seed(
                 # task_timesteps is local to this task; convert to global steps using the task offset.
                 total_train_timesteps = max(total_train_timesteps, task_offset + task_timesteps)
 
-            run_snapshot(cycle_id=cycle_id, task_run_idx=task_run_idx, label="post_task")
+            run_snapshot(cycle_id=cycle_id, task_run_idx=task_run_idx, label="post_task", timestep_log_offset=total_train_timesteps)
 
     # Final train-task eval (for objective metrics on train set)
     per_task_train_final_obj, aggregates_train_obj = evaluate_policy_on_tasks(
@@ -974,6 +976,7 @@ def _run_single_seed(
         objective_metric=args.primary_metric,
         include_raw_returns=args.save_raw_returns,
         tasks_override=train_tasks,
+        timestep_log_offset=int(total_train_timesteps),
     )
 
     # Final eval-task eval (held-out generalization) if enabled
@@ -988,6 +991,7 @@ def _run_single_seed(
             args.primary_metric,
             include_raw_returns=args.save_raw_returns,
             tasks_override=eval_tasks,
+            timestep_log_offset=int(total_train_timesteps),
         )
 
     # Final train-task eval for forgetting (uses dedicated episodes)
@@ -999,6 +1003,7 @@ def _run_single_seed(
         objective_metric=args.primary_metric,
         include_raw_returns=args.save_raw_returns,
         tasks_override=train_tasks,
+        timestep_log_offset=int(total_train_timesteps),
     )
 
     # Plasticity metrics (optional)

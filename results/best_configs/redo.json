@@ -1,0 +1,16 @@
+{
+  "method": "ReDo",
+  "trial_dir": "runs\\grid\\procgen_3_tasks_1_cycle_500k_starpilot\\redo\\20260120_082735-26445169\\trial_000",
+  "avg_score": 0.5555555555555555,
+  "lambda_forgetting": 0.5,
+  "prefer_eval": false,
+  "scores": [
+    1.0833333333333335,
+    0.6111111111111109,
+    -0.02777777777777779
+  ],
+  "params": {
+    "update_interval": 5000,
+    "tau": 0.03
+  }
+}

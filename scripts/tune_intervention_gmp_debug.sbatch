@@ -17,8 +17,9 @@ VENV="/scratch/s5579783/venvs/cora"
 
 EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_1_cycle_10k_debug}"
 METHOD="${METHOD:-gmp}"
-TRIALS="${TRIALS:-3}"
-SEARCH="${SEARCH:-random}"
+TRIALS="${TRIALS:-0}"
+SEARCH="${SEARCH:-grid}"
+PARALLEL_TRIALS="${PARALLEL_TRIALS:-0}"
 BUDGET_OVERRIDE="${BUDGET_OVERRIDE:-5000}"
 EVAL_MODE="${EVAL_MODE:-final_only}"
 EPISODES_PER_TASK="${EPISODES_PER_TASK:-5}"
@@ -49,6 +50,7 @@ echo "EXPERIMENT: $EXPERIMENT"
 echo "METHOD: $METHOD"
 echo "TRIALS: $TRIALS"
 echo "SEARCH: $SEARCH"
+echo "PARALLEL_TRIALS: $PARALLEL_TRIALS"
 echo "BUDGET_OVERRIDE: $BUDGET_OVERRIDE"
 echo "EVAL_MODE: $EVAL_MODE"
 echo "EPISODES_PER_TASK: $EPISODES_PER_TASK"
@@ -85,6 +87,7 @@ srun --cpu-bind=cores --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" \
     --objective "$OBJECTIVE" \
     --num_processes "$NUM_PROCESSES" \
     --seed "$SEED" \
+    --parallel_trials "$PARALLEL_TRIALS" \
     --output_root "runs/tuning"
 
 echo "Intervention tuning (DEBUG) complete!"

@@ -37,6 +37,8 @@ warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
 warnings.filterwarnings("ignore", message=".*old step API.*")
 warnings.filterwarnings("ignore", message=".*np.bool8.*")
 import traceback
+import concurrent.futures
+import multiprocessing
 import hashlib
 import numpy as np
 import torch
@@ -136,10 +138,10 @@ def _search_spaces(method: str, opt_steps_total: Optional[int] = None):
                 return int(max(lo, min(hi, x)))
 
             # Update interval candidates now represent "updates per run" (relative schedule)
-            update_interval_grid = [10, 20, 40, 80]
+            update_interval_grid = [20, 40, 60]
 
             # Warmup candidates now represent fraction of total optimizer steps
-            warmup_grid = [0.0, 0.01, 0.03, 0.07, 0.10]
+            warmup_grid = [0.0, 0.03, 0.07]
 
             # Random sampling ranges (relative schedule)
             min_update = 5
@@ -154,17 +156,17 @@ def _search_spaces(method: str, opt_steps_total: Optional[int] = None):
             }
 
             grid_space = {
-                "target_sparsity": [0.5, 0.7, 0.85, 0.95],
+                "target_sparsity": [0.6, 0.8, 0.9],
                 "update_interval": update_interval_grid,
-                "prune_fraction": [0.05, 0.1, 0.2, 0.3],
+                "prune_fraction": [0.05, 0.1, 0.2],
                 "warmup_steps": warmup_grid,
             }
         else:
             # Fallback (should rarely be used): conservative defaults.
             grid_space = {
-                "target_sparsity": [0.5, 0.7, 0.85, 0.95],
+                "target_sparsity": [0.6, 0.8, 0.9],
                 "update_interval": [200, 500, 1000],
-                "prune_fraction": [0.05, 0.1, 0.2, 0.3],
+                "prune_fraction": [0.05, 0.1, 0.2],
                 "warmup_steps": [0, 200, 1000],
             }
             rand_space = {
@@ -176,14 +178,10 @@ def _search_spaces(method: str, opt_steps_total: Optional[int] = None):
 
     elif method == "gmp":
         grid_space = {
-            "final_sparsity": [0.5, 0.7, 0.85, 0.95],
-            "tstart_frac": [0.02, 0.05, 0.10],
-            "tend_frac": [0.70, 0.80, 0.90],
+            "final_sparsity": [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95],
         }
         rand_space = {
-            "final_sparsity": {"type": "uniform", "low": 0.5, "high": 0.95},
-            "tstart_frac": {"type": "uniform", "low": 0.01, "high": 0.15},
-            "tend_frac": {"type": "uniform", "low": 0.60, "high": 0.95},
+            "final_sparsity": {"type": "uniform", "low": 0.5, "high": 0.9},
         }
     elif method == "redo":
         grid_space = {
@@ -268,7 +266,9 @@ def build_candidates(method: str, search: str, trials: int, seed: int, grid_shuf
 
     if search == "grid":
         combos = _grid(grid_space, grid_shuffle, rng)
-        return combos[:trials] if trials is not None else combos
+        if trials is None or int(trials) <= 0:
+            return combos
+        return combos[:trials]
 
     return _random_sample(rng, rand_space, trials)
 
@@ -350,6 +350,24 @@ def _estimate_total_optimizer_steps(args, ppo_config: Dict[str, Any]) -> Optiona
         return int(opt_steps_total)
     except Exception as e:
         print(f"WARNING: could not estimate optimizer steps (SET scaling). Falling back to defaults. Error: {e}")
+        return None
+
+
+def _infer_train_tasks_per_cycle(experiment_name: str) -> Optional[int]:
+    try:
+        exps = get_available_experiments()
+        if experiment_name not in exps:
+            return None
+        exp = exps[experiment_name]
+        train_tasks = [t for t in exp.tasks if _is_train_task(t)]
+        if not train_tasks:
+            train_tasks = list(exp.tasks)
+        cycle_count = int(getattr(exp, "_cycle_count", 1) or 1)
+        tasks_per_cycle = int(len(train_tasks))
+        if cycle_count > 1 and tasks_per_cycle % cycle_count == 0:
+            tasks_per_cycle = int(tasks_per_cycle // cycle_count)
+        return tasks_per_cycle if tasks_per_cycle > 0 else None
+    except Exception:
         return None
 
 
@@ -1110,6 +1128,9 @@ def run_trial(
     ppo_config: Dict[str, Any]
 ) -> Dict[str, Any]:
 
+    # Keep per-process threading low for RL env stepping
+    torch.set_num_threads(1)
+
     # Avoid collisions across trials
     TaskBase.ALL_TASK_IDS.clear()
 
@@ -1409,6 +1430,11 @@ def parse_args():
     parser.add_argument("--ppo_config", default=None, type=str,
                         help="Path to JSON file with fixed PPO hyperparameters (tuned)")
 
+    parser.add_argument("--params_json", default=None, type=str,
+                        help="Path to JSON dict (single candidate) or list of dicts (explicit candidates).")
+    parser.add_argument("--params_inline", default=None, type=str,
+                        help="Inline JSON dict or list of dicts for explicit candidates.")
+
     parser.add_argument("--num_processes", default=1, type=int)
     parser.add_argument("--output_root", default="runs/tuning", type=str)
 
@@ -1416,6 +1442,9 @@ def parse_args():
     parser.add_argument("--grid_shuffle", action="store_true", default=False)
 
     parser.add_argument("--save_best_k", default=5, type=int)
+
+    parser.add_argument("--parallel_trials", default=1, type=int,
+                        help="Number of trials to run in parallel. Use <=0 to run all candidates in parallel.")
 
     return parser.parse_args()
 
@@ -1476,7 +1505,37 @@ def main():
         print(f"[SET scaling] Grid update_interval: {gs.get('update_interval')}")
         print(f"[SET scaling] Grid warmup_steps: {gs.get('warmup_steps')}")
 
-    candidates = build_candidates(args.method, args.search, args.trials, args.seed, args.grid_shuffle, opt_steps_total=opt_steps_total)
+    explicit_candidates: Optional[List[Dict[str, Any]]] = None
+    if args.params_json or args.params_inline:
+        try:
+            if args.params_json:
+                with open(args.params_json, "r", encoding="utf-8") as f:
+                    explicit = json.load(f)
+            else:
+                explicit = json.loads(args.params_inline)
+            if isinstance(explicit, list):
+                explicit_candidates = list(explicit)
+            elif isinstance(explicit, dict):
+                explicit_candidates = [explicit]
+            else:
+                raise ValueError("params must be a dict or list of dicts")
+        except Exception as e:
+            raise ValueError(f"Failed to parse explicit params: {e}")
+
+    if explicit_candidates is not None:
+        candidates = explicit_candidates
+        print(f"Using explicit candidates: {len(candidates)}")
+    else:
+        candidates = build_candidates(args.method, args.search, args.trials, args.seed, args.grid_shuffle, opt_steps_total=opt_steps_total)
+
+    # GMP: enforce prune_cycle=0 and set tasks_per_cycle from experiment (if known)
+    if args.method.lower() == "gmp":
+        tpc = _infer_train_tasks_per_cycle(args.experiment)
+        for c in candidates:
+            c["prune_cycle"] = 0
+            if tpc is not None:
+                c["tasks_per_cycle"] = int(tpc)
+        print(f"[GMP] prune_cycle fixed at 0; tasks_per_cycle={tpc if tpc is not None else 'unknown'}")
 
     # Save candidates list for traceability
     try:
@@ -1487,13 +1546,33 @@ def main():
 
     results: List[Dict[str, Any]] = []
 
-    for i, params in enumerate(candidates):
-        res = run_trial(i, args, params, base_dir, timestamp, ppo_config)
-        results.append(res)
+    parallel_trials = int(args.parallel_trials)
+    if parallel_trials <= 0:
+        parallel_trials = max(1, len(candidates))
 
-        write_results_jsonl(os.path.join(base_dir, "results.jsonl"), res)
-        write_leaderboard_csv(os.path.join(base_dir, "leaderboard.csv"), results)
-        write_best_json(os.path.join(base_dir, "best_interventions.json"), results, args.save_best_k)
+    if parallel_trials <= 1 or len(candidates) <= 1:
+        for i, params in enumerate(candidates):
+            res = run_trial(i, args, params, base_dir, timestamp, ppo_config)
+            results.append(res)
+
+            write_results_jsonl(os.path.join(base_dir, "results.jsonl"), res)
+            write_leaderboard_csv(os.path.join(base_dir, "leaderboard.csv"), results)
+            write_best_json(os.path.join(base_dir, "best_interventions.json"), results, args.save_best_k)
+    else:
+        print(f"Running trials in parallel with {parallel_trials} workers...")
+        mp_ctx = multiprocessing.get_context("spawn")
+        with concurrent.futures.ProcessPoolExecutor(max_workers=parallel_trials, mp_context=mp_ctx) as ex:
+            futures = {
+                ex.submit(run_trial, i, args, params, base_dir, timestamp, ppo_config): i
+                for i, params in enumerate(candidates)
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                res = fut.result()
+                results.append(res)
+
+                write_results_jsonl(os.path.join(base_dir, "results.jsonl"), res)
+                write_leaderboard_csv(os.path.join(base_dir, "leaderboard.csv"), results)
+                write_best_json(os.path.join(base_dir, "best_interventions.json"), results, args.save_best_k)
 
     print(f"Tuning complete. Best results saved to {os.path.join(base_dir, 'best_interventions.json')}")
 

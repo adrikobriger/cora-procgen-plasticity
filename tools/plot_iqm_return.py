@@ -1607,16 +1607,10 @@ def main():
                         help='Normalization mode for ablation lines (max scales each curve to [0,1])')
     parser.add_argument('--steps_per_epoch', type=int, default=1,
                         help='Divide x-axis steps by this value when drawing the ablation figure (use >1 to show epochs)')
-    parser.add_argument('--mode', choices=['train', 'eval', 'both'], default='both',
-                        help='Which IQM plots to generate (train, eval, or both)')
-    parser.add_argument('--compare_train_eval', action='store_true', default=False,
-                        help='Alias for --mode both')
     parser.add_argument('--legacy_average', action='store_true', default=False,
                         help='Use legacy averaged plotting (method-level CI)')
     parser.add_argument('--best_lambda', type=float, default=0.5,
                         help='Lambda for composite best-score: score - lambda * forgetting')
-    parser.add_argument('--best_prefer_eval', action='store_true', default=False,
-                        help='Prefer eval IQM when selecting best configs (if available)')
     parser.add_argument('--grouped_comparisons', action='store_true', default=False,
                         help='Create grouped comparison plots (Sparse, Reset-based, Baselines) with shared y-axis')
     
@@ -1635,9 +1629,6 @@ def main():
     if not runs_dir.exists():
         print(f"Error: runs_dir '{runs_dir}' does not exist")
         return 1
-    
-    if args.compare_train_eval:
-        args.mode = 'both'
 
     # Legacy path for averaged plots / ablations
     if args.legacy_average or args.ablation_config or args.summary_config:
@@ -1791,70 +1782,62 @@ def main():
         print(f"✓ Done! Created {plots_created} plot(s) in {out_dir}/")
         return 0
 
-    # New default: plot per-configuration curves (no averaging), for train/eval
+    # Plot per-configuration curves (no averaging), train only
     print(f"Selecting best configs from {runs_dir}...")
     best_configs = select_best_configs(
         runs_dir,
         lambda_forgetting=args.best_lambda,
-        prefer_eval=args.best_prefer_eval,
+        prefer_eval=False,
     )
     write_best_configs(best_configs, results_dir)
     print(f"Saved best configs to {results_dir / 'best_configs'}")
 
-    modes = ['train', 'eval'] if args.mode == 'both' else [args.mode]
-    tag_prefixes = {
-        'train': 'train_reward_iqm/',
-        'eval': 'eval_reward_iqm/',
-    }
+    tag_prefix = 'train_reward_iqm/'
+    print(f"\nCollecting per-config runs for train (tag_prefix='{tag_prefix}')...")
+    config_runs = _collect_config_runs(
+        runs_dir,
+        tag_prefix,
+        args.min_points,
+        allow_constant_step_sequence=False,
+    )
+    if not config_runs:
+        print(f"No valid runs found with tag prefix '{tag_prefix}'")
+        return 1
+
+    plots_out_dir = results_dir / 'plots'
     plots_created = 0
+    for method, configs in config_runs.items():
+        best_trial_dir = None
+        if method in best_configs:
+            best_trial_dir = best_configs[method].get('trial_dir')
 
-    for mode in modes:
-        tag_prefix = tag_prefixes[mode]
-        print(f"\nCollecting per-config runs for '{mode}' (tag_prefix='{tag_prefix}')...")
-        min_points = args.min_points if mode == 'train' else args.min_points_eval
-        config_runs = _collect_config_runs(
-            runs_dir,
-            tag_prefix,
-            min_points,
-            allow_constant_step_sequence=(mode == 'eval'),
+        plots_created += _plot_configs_for_method(
+            method=method,
+            configs=configs,
+            best_config_id=best_trial_dir,
+            out_dir=plots_out_dir,
+            title_prefix="Train IQM (all configs)",
+            formats=formats,
+            task_length=args.task_length,
+            num_tasks_override=args.num_tasks,
+            ymin=args.ymin,
+            ymax=args.ymax,
+            best_only=False,
         )
-        if not config_runs:
-            print(f"  ⚠ No runs found for '{mode}'")
-            continue
-
-        mode_out_dir = results_dir / 'plots' / mode
-        for method, configs in config_runs.items():
-            best_trial_dir = None
-            if method in best_configs:
-                best_trial_dir = best_configs[method].get('trial_dir')
-
+        if best_trial_dir is not None:
             plots_created += _plot_configs_for_method(
                 method=method,
                 configs=configs,
                 best_config_id=best_trial_dir,
-                out_dir=mode_out_dir,
-                title_prefix=f"{mode.title()} IQM (all configs)",
+                out_dir=plots_out_dir,
+                title_prefix="Train IQM (best config)",
                 formats=formats,
                 task_length=args.task_length,
                 num_tasks_override=args.num_tasks,
                 ymin=args.ymin,
                 ymax=args.ymax,
-                best_only=False,
+                best_only=True,
             )
-            if best_trial_dir is not None:
-                plots_created += _plot_configs_for_method(
-                    method=method,
-                    configs=configs,
-                    best_config_id=best_trial_dir,
-                    out_dir=mode_out_dir,
-                    title_prefix=f"{mode.title()} IQM (best config)",
-                    formats=formats,
-                    task_length=args.task_length,
-                    num_tasks_override=args.num_tasks,
-                    ymin=args.ymin,
-                    ymax=args.ymax,
-                    best_only=True,
-                )
 
     if plots_created == 0:
         print("No plots created! Check your data.")

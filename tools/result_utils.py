@@ -34,7 +34,7 @@ def find_event_files(root: str) -> List[str]:
 # Seed + group detection
 # ---------------------------
 
-SEED_DIR_RE = re.compile(r"seed[_-]?(\d+)$", re.IGNORECASE)
+SEED_DIR_RE = re.compile(r"seed[_-]?(\d+)", re.IGNORECASE)  # Match seed_N even with timestamp after
 
 
 @dataclass(frozen=True)
@@ -55,14 +55,17 @@ def _split_relpath(relpath: str) -> List[str]:
 def infer_group_and_seed(runs_dir: str, event_file: str) -> RunIdentity:
     """
     Infer:
-      - group_key: everything before seed_<k> directory (if exists), or <experiment>/<method>
-      - seed: extracted from 'seed_<k>' directory, or use timestamp folder as seed identifier
+      - group_key: intervention/method name (e.g., "dense", "gmp")
+      - seed: extracted from 'seed_<k>' directory
 
     Supports layouts like:
-      runs/<experiment>/<method>/<run_name>/seed_0/.../events...  → group=exp/method/run_name, seed=0
-      runs/<experiment>/<method>/<timestamp_run>/.../events...     → group=exp/method, seed=timestamp_run
+      runs/<intervention>/seed_0_timestamp/.../events...  → group=intervention, seed=0
+      runs/<experiment>/<method>/seed_0/.../events...     → group=experiment/method, seed=0
 
-    If no seed dir exists, group at <experiment>/<method> level and use run folder as seed.
+    Strategy:
+    1. Find any folder matching "seed_N" pattern (even with timestamp after)
+    2. Extract seed number N
+    3. Group key = everything before that seed folder
     """
     abs_runs = os.path.abspath(runs_dir)
     abs_event = os.path.abspath(event_file)
@@ -73,32 +76,30 @@ def infer_group_and_seed(runs_dir: str, event_file: str) -> RunIdentity:
     rel = os.path.relpath(abs_event, abs_runs)
     parts = _split_relpath(rel)
 
-    # Look for seed_<k> directory
+    # Look for seed_<k> directory (may have timestamp like seed_0_20260120_112732)
     seed_idx = None
     seed_val = None
     for i, p in enumerate(parts):
-        m = SEED_DIR_RE.match(p)
+        m = SEED_DIR_RE.search(p)  # Use search instead of match to find seed_N anywhere in string
         if m:
             seed_idx = i
             seed_val = m.group(1)
             break
 
-    if seed_idx is not None:
-        # Has seed folder: group everything before seed_<k>
+    if seed_idx is not None and seed_idx > 0:
+        # Has seed folder: group everything before seed folder
         group_parts = parts[:seed_idx]
         group_key = "/".join(group_parts) if group_parts else "root"
         seed = seed_val if seed_val is not None else "0"
         return RunIdentity(group_key=group_key, seed=seed, event_file=event_file)
 
-    # No seed folder: assume structure runs/<experiment>/<method>/<run_timestamp>/...
-    # Group at <experiment>/<method> level, use timestamp folder as seed identifier
-    if len(parts) >= 3:
-        # parts[0] = experiment, parts[1] = method, parts[2] = timestamp folder
-        group_key = f"{parts[0]}/{parts[1]}"
-        seed = parts[2]  # Use timestamp folder name as seed identifier
+    # Fallback: assume structure intervention/run_folder/...
+    if len(parts) >= 2:
+        group_key = parts[0]  # First folder = intervention name
+        seed = "0"
         return RunIdentity(group_key=group_key, seed=seed, event_file=event_file)
     
-    # Fallback: use full parent path
+    # Last resort fallback
     parent = os.path.dirname(rel).replace("\\", "/")
     group_key = parent if parent else "root"
     return RunIdentity(group_key=group_key, seed="0", event_file=event_file)
@@ -244,6 +245,81 @@ def extract_task_avg_dormant_frac_curve(scalars: Dict[str, List[Tuple[int, float
         av = forward_fill_align(s, v, target_steps)
         aligned.append(av)
 
+    mat = np.vstack(aligned)  # [n_tasks, n_steps]
+    mean = np.nanmean(mat, axis=0)
+    return target_steps, mean
+
+
+# ---------------------------
+# IMPROVED: Generic task-averaged curve extraction
+# ---------------------------
+
+def find_tags_matching_prefix(scalars: Dict[str, List[Tuple[int, float]]], prefix: str) -> List[str]:
+    """
+    Find all tags in scalars that match: prefix/0, prefix/1, prefix/2, etc.
+    
+    Args:
+        scalars: Tag -> [(step, value)] dict
+        prefix: Tag prefix like "forgetting/isolated_task_mean"
+    
+    Returns:
+        List of matching tags sorted by task index
+    """
+    pattern = re.compile(rf"^{re.escape(prefix)}/(\d+)$")
+    matches = []
+    for tag in scalars.keys():
+        m = pattern.match(tag)
+        if m:
+            task_id = int(m.group(1))
+            matches.append((task_id, tag))
+    matches.sort(key=lambda x: x[0])
+    return [tag for _, tag in matches]
+
+
+def extract_task_avg_curve_from_prefix(
+    scalars: Dict[str, List[Tuple[int, float]]], 
+    prefix: str
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """
+    Extract task-averaged curve from task-wise tags like:
+      prefix/0, prefix/1, prefix/2, ...
+    
+    Args:
+        scalars: Tag -> [(step, value)] dict
+        prefix: Tag prefix (e.g., "forgetting/isolated_task_mean")
+    
+    Returns:
+        (steps, avg_values) or None if no matching tags found
+    
+    Process:
+        1. Find all tags matching prefix/0, prefix/1, etc.
+        2. Load curves for each task
+        3. Align to union of steps using forward-fill
+        4. Average across tasks at each step
+    """
+    task_tags = find_tags_matching_prefix(scalars, prefix)
+    if not task_tags:
+        return None
+    
+    curves = []
+    all_steps = set()
+    for tag in task_tags:
+        c = get_curve(scalars, tag)
+        if c is None:
+            continue
+        s, v = c
+        curves.append((s, v))
+        all_steps.update(s.tolist())
+    
+    if not curves:
+        return None
+    
+    target_steps = np.array(sorted(all_steps), dtype=np.int64)
+    aligned = []
+    for s, v in curves:
+        av = forward_fill_align(s, v, target_steps)
+        aligned.append(av)
+    
     mat = np.vstack(aligned)  # [n_tasks, n_steps]
     mean = np.nanmean(mat, axis=0)
     return target_steps, mean

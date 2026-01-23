@@ -16,6 +16,7 @@ from result_utils import (
     get_curve,
     extract_task_avg_eval_iqm_curve,
     extract_task_avg_dormant_frac_curve,
+    extract_task_avg_curve_from_prefix,
     bootstrap_ci,
     aggregate_curves_across_seeds,
 )
@@ -39,6 +40,9 @@ def choose_best_event_file(files: List[str]) -> str:
 def extract_run_metrics(
     scalars: Dict[str, List[Tuple[int, float]]],
     last_k_rank: int = 10,
+    group_key: str = "unknown",
+    seed: str = "0",
+    verbose: bool = False,
 ) -> Dict[str, Any]:
     """
     Extract per-seed metrics from one TensorBoard run (one event file).
@@ -53,6 +57,7 @@ def extract_run_metrics(
       - per-seed summary scalars
       - curves for time-series aggregation
     """
+    tried_tags = {}  # Track which tags we tried for debugging
 
     # ---- task-avg eval IQM curve ----
     eval_curve = extract_task_avg_eval_iqm_curve(scalars)
@@ -64,15 +69,36 @@ def extract_run_metrics(
         eval_steps, eval_vals = None, None
         final_iqm = float("nan")
         peak_iqm = float("nan")
+        if verbose:
+            tried_tags["eval_iqm"] = ["eval_reward_iqm/<task_id>"]
 
-    # ---- forgetting curve + MAX ----
-    forget_curve = get_curve(scalars, "forgetting/isolated_avg")
+    # ---- forgetting curve + MAX (IMPROVED TAG DETECTION) ----
+    forget_curve = None
+    tried_forget_tags = []
+    
+    # Try exact tags first (backward compatibility)
+    for tag in ["forgetting/isolated_avg_iqm", "forgetting/isolated_avg_mean", "forgetting/isolated_avg"]:
+        forget_curve = get_curve(scalars, tag)
+        tried_forget_tags.append(tag)
+        if forget_curve is not None:
+            break
+    
+    # If not found, try task-wise aggregation
+    if forget_curve is None:
+        for prefix in ["forgetting/isolated_task_iqm", "forgetting/isolated_task_mean"]:
+            forget_curve = extract_task_avg_curve_from_prefix(scalars, prefix)
+            tried_forget_tags.append(f"{prefix}/<task_id>")
+            if forget_curve is not None:
+                break
+    
     if forget_curve is not None:
         f_steps, f_vals = forget_curve
         max_forgetting = float(np.nanmax(f_vals))  # MAX value
     else:
         f_steps, f_vals = None, None
         max_forgetting = float("nan")
+        if verbose:
+            tried_tags["forgetting"] = tried_forget_tags
 
     # ---- dormant frac (task-averaged) ----
     dorm_curve = extract_task_avg_dormant_frac_curve(scalars)
@@ -84,6 +110,8 @@ def extract_run_metrics(
         d_steps, d_vals = None, None
         final_dormant = float("nan")
         peak_dormant = float("nan")
+        if verbose:
+            tried_tags["dormant_frac"] = ["plasticity/dormant_frac/<task_id>"]
 
     # ---- sparsity (optional: for curves only) ----
     sparsity_curve = None
@@ -97,8 +125,25 @@ def extract_run_metrics(
     else:
         s_steps, s_vals = None, None
 
-    # ---- effective rank: AVERAGE of last K values (robust) ----
-    er_curve = get_curve(scalars, "effective_rank/avg")
+    # ---- effective rank: AVERAGE of last K values (robust) (IMPROVED TAG DETECTION) ----
+    er_curve = None
+    tried_er_tags = []
+    
+    # Try different possible tag names
+    for tag in ["effective_rank/across_tasks_avg", "effective_rank/avg", "effective_rank/task_avg"]:
+        er_curve = get_curve(scalars, tag)
+        tried_er_tags.append(tag)
+        if er_curve is not None:
+            break
+    
+    # If not found, try task-wise aggregation
+    if er_curve is None:
+        for prefix in ["effective_rank/task", "effective_rank/layers_avg"]:
+            er_curve = extract_task_avg_curve_from_prefix(scalars, prefix)
+            tried_er_tags.append(f"{prefix}/<task_id>")
+            if er_curve is not None:
+                break
+    
     if er_curve is not None:
         er_steps, er_vals = er_curve
         # Take last K values (or all if fewer than K)
@@ -107,6 +152,14 @@ def extract_run_metrics(
     else:
         er_steps, er_vals = None, None
         final_er = float("nan")
+        if verbose:
+            tried_tags["effective_rank"] = tried_er_tags
+
+    # Print warnings for missing metrics in verbose mode
+    if verbose and tried_tags:
+        for metric, tags in tried_tags.items():
+            print(f"[WARN] Missing {metric} curve for group_key={group_key}, seed={seed}")
+            print(f"       Tried tags: {', '.join(tags)}")
 
     return {
         "final_iqm_return": final_iqm,
@@ -178,7 +231,13 @@ def main():
                     print(f"       Reason: {e}")
                 continue
 
-            m = extract_run_metrics(scalars, last_k_rank=args.last_k_rank)
+            m = extract_run_metrics(
+                scalars, 
+                last_k_rank=args.last_k_rank,
+                group_key=group_key,
+                seed=seed,
+                verbose=args.verbose
+            )
             group_seed_metrics[group_key][seed] = m
 
     if args.verbose:

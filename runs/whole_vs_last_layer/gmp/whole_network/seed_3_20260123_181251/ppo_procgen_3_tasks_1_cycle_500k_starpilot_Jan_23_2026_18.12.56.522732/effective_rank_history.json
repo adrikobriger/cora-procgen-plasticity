@@ -1,0 +1,548 @@
+{
+  "measurements": [
+    {
+      "timestep": 4096,
+      "layer": "features",
+      "effective_rank": 3.688261312718691
+    },
+    {
+      "timestep": 4096,
+      "layer": "critic_in",
+      "effective_rank": 3.688261312718691
+    },
+    {
+      "timestep": 4096,
+      "layer": "features",
+      "effective_rank": 6.857447500677058
+    },
+    {
+      "timestep": 4096,
+      "layer": "critic_in",
+      "effective_rank": 6.857447500677058
+    },
+    {
+      "timestep": 4096,
+      "layer": "features",
+      "effective_rank": 4.738396899343353
+    },
+    {
+      "timestep": 4096,
+      "layer": "critic_in",
+      "effective_rank": 4.738396899343353
+    },
+    {
+      "timestep": 4096,
+      "layer": "features",
+      "effective_rank": 1.4012158933107637
+    },
+    {
+      "timestep": 4096,
+      "layer": "critic_in",
+      "effective_rank": 1.4012158933107637
+    },
+    {
+      "timestep": 4096,
+      "layer": "features",
+      "effective_rank": 1.6547345316038977
+    },
+    {
+      "timestep": 4096,
+      "layer": "critic_in",
+      "effective_rank": 1.6547345316038977
+    },
+    {
+      "timestep": 4096,
+      "layer": "features",
+      "effective_rank": 1.0889076982427488
+    },
+    {
+      "timestep": 4096,
+      "layer": "critic_in",
+      "effective_rank": 1.0889076982427488
+    },
+    {
+      "timestep": 258048,
+      "layer": "features",
+      "effective_rank": 19.45525545856139
+    },
+    {
+      "timestep": 258048,
+      "layer": "critic_in",
+      "effective_rank": 19.45525545856139
+    },
+    {
+      "timestep": 258048,
+      "layer": "features",
+      "effective_rank": 12.791939556216846
+    },
+    {
+      "timestep": 258048,
+      "layer": "critic_in",
+      "effective_rank": 12.791939556216846
+    },
+    {
+      "timestep": 258048,
+      "layer": "features",
+      "effective_rank": 10.545892989817455
+    },
+    {
+      "timestep": 258048,
+      "layer": "critic_in",
+      "effective_rank": 10.545892989817455
+    },
+    {
+      "timestep": 258048,
+      "layer": "features",
+      "effective_rank": 8.32804444264676
+    },
+    {
+      "timestep": 258048,
+      "layer": "critic_in",
+      "effective_rank": 8.32804444264676
+    },
+    {
+      "timestep": 258048,
+      "layer": "features",
+      "effective_rank": 7.956084160984445
+    },
+    {
+      "timestep": 258048,
+      "layer": "critic_in",
+      "effective_rank": 7.956084160984445
+    },
+    {
+      "timestep": 258048,
+      "layer": "features",
+      "effective_rank": 9.188344700951856
+    },
+    {
+      "timestep": 258048,
+      "layer": "critic_in",
+      "effective_rank": 9.188344700951856
+    },
+    {
+      "timestep": 503808,
+      "layer": "features",
+      "effective_rank": 13.760128213441048
+    },
+    {
+      "timestep": 503808,
+      "layer": "critic_in",
+      "effective_rank": 13.760128213441048
+    },
+    {
+      "timestep": 503808,
+      "layer": "features",
+      "effective_rank": 7.328312224620634
+    },
+    {
+      "timestep": 503808,
+      "layer": "critic_in",
+      "effective_rank": 7.328312224620634
+    },
+    {
+      "timestep": 503808,
+      "layer": "features",
+      "effective_rank": 11.303498137107661
+    },
+    {
+      "timestep": 503808,
+      "layer": "critic_in",
+      "effective_rank": 11.303498137107661
+    },
+    {
+      "timestep": 503808,
+      "layer": "features",
+      "effective_rank": 9.131110566095467
+    },
+    {
+      "timestep": 503808,
+      "layer": "critic_in",
+      "effective_rank": 9.131110566095467
+    },
+    {
+      "timestep": 503808,
+      "layer": "features",
+      "effective_rank": 6.341803554913799
+    },
+    {
+      "timestep": 503808,
+      "layer": "critic_in",
+      "effective_rank": 6.341803554913799
+    },
+    {
+      "timestep": 503808,
+      "layer": "features",
+      "effective_rank": 4.057083702152704
+    },
+    {
+      "timestep": 503808,
+      "layer": "critic_in",
+      "effective_rank": 4.057083702152704
+    },
+    {
+      "timestep": 507904,
+      "layer": "features",
+      "effective_rank": 9.409337587666817
+    },
+    {
+      "timestep": 507904,
+      "layer": "critic_in",
+      "effective_rank": 9.409337587666817
+    },
+    {
+      "timestep": 507904,
+      "layer": "features",
+      "effective_rank": 8.635842032828307
+    },
+    {
+      "timestep": 507904,
+      "layer": "critic_in",
+      "effective_rank": 8.635842032828307
+    },
+    {
+      "timestep": 507904,
+      "layer": "features",
+      "effective_rank": 8.328632189300437
+    },
+    {
+      "timestep": 507904,
+      "layer": "critic_in",
+      "effective_rank": 8.328632189300437
+    },
+    {
+      "timestep": 507904,
+      "layer": "features",
+      "effective_rank": 7.868921764098523
+    },
+    {
+      "timestep": 507904,
+      "layer": "critic_in",
+      "effective_rank": 7.868921764098523
+    },
+    {
+      "timestep": 507904,
+      "layer": "features",
+      "effective_rank": 9.057894032316351
+    },
+    {
+      "timestep": 507904,
+      "layer": "critic_in",
+      "effective_rank": 9.057894032316351
+    },
+    {
+      "timestep": 507904,
+      "layer": "features",
+      "effective_rank": 5.747485007669737
+    },
+    {
+      "timestep": 507904,
+      "layer": "critic_in",
+      "effective_rank": 5.747485007669737
+    },
+    {
+      "timestep": 761856,
+      "layer": "features",
+      "effective_rank": 6.746540408514369
+    },
+    {
+      "timestep": 761856,
+      "layer": "critic_in",
+      "effective_rank": 6.746540408514369
+    },
+    {
+      "timestep": 761856,
+      "layer": "features",
+      "effective_rank": 2.9826176842672427
+    },
+    {
+      "timestep": 761856,
+      "layer": "critic_in",
+      "effective_rank": 2.9826176842672427
+    },
+    {
+      "timestep": 761856,
+      "layer": "features",
+      "effective_rank": 8.125138996344628
+    },
+    {
+      "timestep": 761856,
+      "layer": "critic_in",
+      "effective_rank": 8.125138996344628
+    },
+    {
+      "timestep": 761856,
+      "layer": "features",
+      "effective_rank": 2.2864639987117195
+    },
+    {
+      "timestep": 761856,
+      "layer": "critic_in",
+      "effective_rank": 2.2864639987117195
+    },
+    {
+      "timestep": 761856,
+      "layer": "features",
+      "effective_rank": 5.618716104259997
+    },
+    {
+      "timestep": 761856,
+      "layer": "critic_in",
+      "effective_rank": 5.618716104259997
+    },
+    {
+      "timestep": 761856,
+      "layer": "features",
+      "effective_rank": 4.602749700297423
+    },
+    {
+      "timestep": 761856,
+      "layer": "critic_in",
+      "effective_rank": 4.602749700297423
+    },
+    {
+      "timestep": 1007616,
+      "layer": "features",
+      "effective_rank": 3.0246923313644776
+    },
+    {
+      "timestep": 1007616,
+      "layer": "critic_in",
+      "effective_rank": 3.0246923313644776
+    },
+    {
+      "timestep": 1007616,
+      "layer": "features",
+      "effective_rank": 4.195118450127913
+    },
+    {
+      "timestep": 1007616,
+      "layer": "critic_in",
+      "effective_rank": 4.195118450127913
+    },
+    {
+      "timestep": 1007616,
+      "layer": "features",
+      "effective_rank": 6.733345929600397
+    },
+    {
+      "timestep": 1007616,
+      "layer": "critic_in",
+      "effective_rank": 6.733345929600397
+    },
+    {
+      "timestep": 1007616,
+      "layer": "features",
+      "effective_rank": 1.804904830575887
+    },
+    {
+      "timestep": 1007616,
+      "layer": "critic_in",
+      "effective_rank": 1.804904830575887
+    },
+    {
+      "timestep": 1007616,
+      "layer": "features",
+      "effective_rank": 4.457005079426036
+    },
+    {
+      "timestep": 1007616,
+      "layer": "critic_in",
+      "effective_rank": 4.457005079426036
+    },
+    {
+      "timestep": 1007616,
+      "layer": "features",
+      "effective_rank": 4.854823486307096
+    },
+    {
+      "timestep": 1007616,
+      "layer": "critic_in",
+      "effective_rank": 4.854823486307096
+    },
+    {
+      "timestep": 1011712,
+      "layer": "features",
+      "effective_rank": 6.742931094780002
+    },
+    {
+      "timestep": 1011712,
+      "layer": "critic_in",
+      "effective_rank": 6.742931094780002
+    },
+    {
+      "timestep": 1011712,
+      "layer": "features",
+      "effective_rank": 3.19370957967772
+    },
+    {
+      "timestep": 1011712,
+      "layer": "critic_in",
+      "effective_rank": 3.19370957967772
+    },
+    {
+      "timestep": 1011712,
+      "layer": "features",
+      "effective_rank": 6.72727480849077
+    },
+    {
+      "timestep": 1011712,
+      "layer": "critic_in",
+      "effective_rank": 6.72727480849077
+    },
+    {
+      "timestep": 1011712,
+      "layer": "features",
+      "effective_rank": 2.3059574015277953
+    },
+    {
+      "timestep": 1011712,
+      "layer": "critic_in",
+      "effective_rank": 2.3059574015277953
+    },
+    {
+      "timestep": 1011712,
+      "layer": "features",
+      "effective_rank": 2.2843472639944165
+    },
+    {
+      "timestep": 1011712,
+      "layer": "critic_in",
+      "effective_rank": 2.2843472639944165
+    },
+    {
+      "timestep": 1011712,
+      "layer": "features",
+      "effective_rank": 6.449422199181876
+    },
+    {
+      "timestep": 1011712,
+      "layer": "critic_in",
+      "effective_rank": 6.449422199181876
+    },
+    {
+      "timestep": 1265664,
+      "layer": "features",
+      "effective_rank": 7.488152575313937
+    },
+    {
+      "timestep": 1265664,
+      "layer": "critic_in",
+      "effective_rank": 7.488152575313937
+    },
+    {
+      "timestep": 1265664,
+      "layer": "features",
+      "effective_rank": 3.479954750333347
+    },
+    {
+      "timestep": 1265664,
+      "layer": "critic_in",
+      "effective_rank": 3.479954750333347
+    },
+    {
+      "timestep": 1265664,
+      "layer": "features",
+      "effective_rank": 3.462687580428285
+    },
+    {
+      "timestep": 1265664,
+      "layer": "critic_in",
+      "effective_rank": 3.462687580428285
+    },
+    {
+      "timestep": 1265664,
+      "layer": "features",
+      "effective_rank": 6.477384287917867
+    },
+    {
+      "timestep": 1265664,
+      "layer": "critic_in",
+      "effective_rank": 6.477384287917867
+    },
+    {
+      "timestep": 1265664,
+      "layer": "features",
+      "effective_rank": 5.667456207809999
+    },
+    {
+      "timestep": 1265664,
+      "layer": "critic_in",
+      "effective_rank": 5.667456207809999
+    },
+    {
+      "timestep": 1265664,
+      "layer": "features",
+      "effective_rank": 6.979917884385145
+    },
+    {
+      "timestep": 1265664,
+      "layer": "critic_in",
+      "effective_rank": 6.979917884385145
+    },
+    {
+      "timestep": 1511424,
+      "layer": "features",
+      "effective_rank": 10.798192895334251
+    },
+    {
+      "timestep": 1511424,
+      "layer": "critic_in",
+      "effective_rank": 10.798192895334251
+    },
+    {
+      "timestep": 1511424,
+      "layer": "features",
+      "effective_rank": 9.052552830982263
+    },
+    {
+      "timestep": 1511424,
+      "layer": "critic_in",
+      "effective_rank": 9.052552830982263
+    },
+    {
+      "timestep": 1511424,
+      "layer": "features",
+      "effective_rank": 2.492144773146294
+    },
+    {
+      "timestep": 1511424,
+      "layer": "critic_in",
+      "effective_rank": 2.492144773146294
+    },
+    {
+      "timestep": 1511424,
+      "layer": "features",
+      "effective_rank": 3.127391976381096
+    },
+    {
+      "timestep": 1511424,
+      "layer": "critic_in",
+      "effective_rank": 3.127391976381096
+    },
+    {
+      "timestep": 1511424,
+      "layer": "features",
+      "effective_rank": 4.814722446311744
+    },
+    {
+      "timestep": 1511424,
+      "layer": "critic_in",
+      "effective_rank": 4.814722446311744
+    },
+    {
+      "timestep": 1511424,
+      "layer": "features",
+      "effective_rank": 3.834062247045458
+    },
+    {
+      "timestep": 1511424,
+      "layer": "critic_in",
+      "effective_rank": 3.834062247045458
+    }
+  ],
+  "latest_by_layer": {
+    "features": 3.834062247045458,
+    "critic_in": 3.834062247045458
+  }
+}

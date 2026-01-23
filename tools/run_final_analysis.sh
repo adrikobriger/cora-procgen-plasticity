@@ -27,8 +27,7 @@ else
 fi
 
 # Default arguments
-RUNS_DIR="${ROOT_DIR}/runs/procgen_3_tasks_1_cycle_500k_starpilot"
-OUT_DIR="${ROOT_DIR}/results/final_results"
+OUT_DIR_BASE="${ROOT_DIR}/results/final_results"
 BOOTSTRAP=10000
 STATISTIC="median"
 VERBOSE=""
@@ -37,6 +36,8 @@ TAG_PREFIX="train_reward_iqm/"
 NUM_TASKS=3
 TASK_LENGTH=500000
 MIN_POINTS=1
+RUNS_DIR_OVERRIDE=""
+RUNS_DIRS_OVERRIDE=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -51,7 +52,11 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --runs-dir)
-            RUNS_DIR="$2"
+            RUNS_DIR_OVERRIDE="$2"
+            shift 2
+            ;;
+        --runs-dirs)
+            RUNS_DIRS_OVERRIDE="$2"
             shift 2
             ;;
         --grouped)
@@ -85,7 +90,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --verbose, -v       Enable verbose output"
             echo "  --quick             Use fewer bootstrap samples (faster)"
             echo "  --runs-dir DIR      Specify runs directory"
-            echo "  --out-dir DIR       Specify output directory"
+            echo "  --runs-dirs DIRS    Comma-separated runs directories"
+            echo "  --out-dir DIR       Base output directory"
             echo "  --grouped           Also generate grouped comparison plots"
             echo "  --tag-prefix STR    Tag prefix for grouped plots (default: train_reward_iqm/)"
             echo "  --num-tasks N       Number of tasks for grouped plots"
@@ -105,50 +111,64 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check if runs directory exists
-if [ ! -d "$RUNS_DIR" ]; then
-    echo "ERROR: Runs directory not found: $RUNS_DIR"
-    exit 1
+declare -a RUNS_DIRS=()
+if [ -n "$RUNS_DIR_OVERRIDE" ]; then
+    RUNS_DIRS=("$RUNS_DIR_OVERRIDE")
+elif [ -n "$RUNS_DIRS_OVERRIDE" ]; then
+    IFS=',' read -ra RUNS_DIRS <<< "$RUNS_DIRS_OVERRIDE"
+else
+    RUNS_DIRS=(
+        "${ROOT_DIR}/runs/procgen_3_tasks_1_cycle_500k_starpilot"
+        "${ROOT_DIR}/runs/whole_vs_last_layer"
+    )
 fi
 
-echo "Configuration:"
-echo "  Runs directory: $RUNS_DIR"
-echo "  Output directory: $OUT_DIR"
-echo "  Bootstrap samples: $BOOTSTRAP"
-echo "  Statistic: $STATISTIC"
-echo "  Grouped plots: $GROUPED"
-if [ "$GROUPED" = "true" ]; then
-    echo "    Tag prefix: $TAG_PREFIX"
-    echo "    Num tasks: $NUM_TASKS"
-    echo "    Task length: $TASK_LENGTH"
-    echo "    Min points: $MIN_POINTS"
-fi
-echo ""
+for RUNS_DIR in "${RUNS_DIRS[@]}"; do
+    if [ ! -d "$RUNS_DIR" ]; then
+        echo "WARNING: Runs directory not found: $RUNS_DIR"
+        continue
+    fi
 
-# Run the analysis
-"$PYTHON" "${SCRIPT_DIR}/analyze_final_run.py" \
-    --runs-dir "$RUNS_DIR" \
-    --out-dir "$OUT_DIR" \
-    --bootstrap "$BOOTSTRAP" \
-    --statistic "$STATISTIC" \
-    $VERBOSE
+    RUNS_NAME="$(basename "$RUNS_DIR")"
+    OUT_DIR="${OUT_DIR_BASE}/${RUNS_NAME}"
 
-# Optional grouped comparison plots
-if [ "$GROUPED" = "true" ]; then
-    "$PYTHON" "${SCRIPT_DIR}/plot_iqm_return.py" \
-        --runs_dir "$RUNS_DIR" \
-        --out_dir "$OUT_DIR" \
-        --legacy_average \
-        --grouped_comparisons \
-        --tag_prefix "$TAG_PREFIX" \
-        --num_tasks "$NUM_TASKS" \
-        --task_length "$TASK_LENGTH" \
-        --min_points "$MIN_POINTS" \
-        --formats both
-fi
+    echo "Configuration:"
+    echo "  Runs directory: $RUNS_DIR"
+    echo "  Output directory: $OUT_DIR"
+    echo "  Bootstrap samples: $BOOTSTRAP"
+    echo "  Statistic: $STATISTIC"
+    echo "  Grouped plots: $GROUPED"
+    if [ "$GROUPED" = "true" ]; then
+        echo "    Tag prefix: $TAG_PREFIX"
+        echo "    Num tasks: $NUM_TASKS"
+        echo "    Task length: $TASK_LENGTH"
+        echo "    Min points: $MIN_POINTS"
+    fi
+    echo ""
+
+    "$PYTHON" "${SCRIPT_DIR}/analyze_final_run.py" \
+        --runs-dir "$RUNS_DIR" \
+        --out-dir "$OUT_DIR" \
+        --bootstrap "$BOOTSTRAP" \
+        --statistic "$STATISTIC" \
+        $VERBOSE
+
+    if [ "$GROUPED" = "true" ]; then
+        "$PYTHON" "${SCRIPT_DIR}/plot_iqm_return.py" \
+            --runs_dir "$RUNS_DIR" \
+            --out_dir "$OUT_DIR" \
+            --legacy_average \
+            --grouped_comparisons \
+            --tag_prefix "$TAG_PREFIX" \
+            --num_tasks "$NUM_TASKS" \
+            --task_length "$TASK_LENGTH" \
+            --min_points "$MIN_POINTS" \
+            --formats both
+    fi
+done
 
 echo ""
 echo "=================================="
 echo "Analysis complete!"
-echo "Results saved to: $OUT_DIR"
+echo "Results saved under: $OUT_DIR_BASE"
 echo "=================================="

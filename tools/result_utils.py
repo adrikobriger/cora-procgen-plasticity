@@ -9,6 +9,12 @@ analysis scripts in /tools. It implements:
 - load_scalars: read scalar series from a single event file (tensorflow or tensorboard backends)
 - merge_scalars_dicts: merge multiple per-file scalar dicts for a seed
 - convenience extractors for eval_iqm, dormant fraction and forgetting curves
+  * IMPORTANT: Task filtering for on-distribution tasks (0, 2, 4):
+    - eval_reward_iqm: FILTERED to tasks 0, 2, 4
+    - train_reward_iqm: FILTERED to tasks 0, 2, 4
+    - dormant_frac: FILTERED to tasks 0, 2, 4
+    - forgetting: FILTERED to tasks 0, 2, 4 (when using per-task tags)
+    - effective_rank: Uses pre-aggregated tags (not filtered, as logged)
 - bootstrap_ci: per-array bootstrap confidence intervals for mean/median/iqm
 - aggregate_curves_across_seeds: align per-seed curves (forward-fill) and compute central + CI
 
@@ -146,15 +152,41 @@ def get_curve(scalars: Dict[str, List[Tuple[int, float]]], tag: str) -> Optional
     return None
 
 
-def _task_avg_from_matching_tags(scalars: Dict[str, List[Tuple[int, float]]], include_substrs: List[str]) -> Optional[Tuple[List[int], List[float]]]:
+def _task_avg_from_matching_tags(
+    scalars: Dict[str, List[Tuple[int, float]]], 
+    include_substrs: List[str],
+    filter_on_dist_tasks: bool = False
+) -> Optional[Tuple[List[int], List[float]]]:
     """Generic helper: find tags containing any of include_substrs, average across tags per step.
 
     This targets the common logging pattern where each task writes a scalar under a tag
     and the per-run task-average is computed by averaging across those tags at each step.
+    
+    Args:
+        scalars: Dict of scalar data
+        include_substrs: List of substrings to match in tag names
+        filter_on_dist_tasks: If True, only include tasks 0, 2, 4 (on-distribution)
     """
     candidate_tags = [t for t in scalars.keys() if any(s in t.lower() for s in include_substrs)]
     if not candidate_tags:
         return None
+
+    # Filter to only on-distribution tasks if requested
+    if filter_on_dist_tasks:
+        import re
+        on_dist_tasks = {'0', '2', '4'}
+        filtered_tags = []
+        
+        for tag in candidate_tags:
+            # Look for patterns like /0, /2, /4 or _0, _2, _4 or task_0, task_2, task_4
+            match = re.search(r'[/_](?:task[/_]?)?(\d+)$', tag)
+            if match and match.group(1) in on_dist_tasks:
+                filtered_tags.append(tag)
+        
+        candidate_tags = filtered_tags
+        
+        if not candidate_tags:
+            return None
 
     # Build step -> list of values
     from collections import defaultdict
@@ -212,15 +244,18 @@ def extract_task_avg_eval_iqm_curve(scalars: Dict[str, List[Tuple[int, float]]])
 def extract_task_avg_train_iqm_curve(scalars: Dict[str, List[Tuple[int, float]]]) -> Optional[Tuple[List[int], List[float]]]:
     # match tags like 'train_reward_iqm/task_*' or 'train/iqm/task_*'
     # specifically target training metrics
-    return _task_avg_from_matching_tags(scalars, ['train_reward_iqm', 'train_iqm', 'train'])
+    # Filter to on-distribution tasks: 0, 2, 4
+    return _task_avg_from_matching_tags(scalars, ['train_reward_iqm', 'train_iqm', 'train'], filter_on_dist_tasks=True)
 
 
 def extract_task_avg_dormant_frac_curve(scalars: Dict[str, List[Tuple[int, float]]]) -> Optional[Tuple[List[int], List[float]]]:
-    return _task_avg_from_matching_tags(scalars, ['dormant', 'dormancy', 'dormant_frac', 'dormant/fr'])
+    # Filter to on-distribution tasks: 0, 2, 4
+    return _task_avg_from_matching_tags(scalars, ['dormant', 'dormancy', 'dormant_frac', 'dormant/fr'], filter_on_dist_tasks=True)
 
 
 def extract_task_avg_isolated_forgetting_curve(scalars: Dict[str, List[Tuple[int, float]]]) -> Optional[Tuple[List[int], List[float]]]:
     # Try exact aggregate tags first (these are already averaged across tasks)
+    # Note: These aggregate tags may include all tasks, but that's how they're logged
     for candidate in ['forgetting/isolated_avg_iqm', 'forgetting/isolated_avg_mean', 'forgetting/isolated_avg']:
         result = get_curve(scalars, candidate)
         if result is not None:
@@ -233,7 +268,8 @@ def extract_task_avg_isolated_forgetting_curve(scalars: Dict[str, List[Tuple[int
             return result
     
     # Fall back to averaging per-task forgetting tags
-    return _task_avg_from_matching_tags(scalars, ['forgetting/isolated_task', 'forget'])
+    # Filter to on-distribution tasks: 0, 2, 4
+    return _task_avg_from_matching_tags(scalars, ['forgetting/isolated_task', 'forget'], filter_on_dist_tasks=True)
 
 
 def load_effective_rank_curve_from_json(event_file: str) -> Optional[Tuple[List[int], List[float]]]:

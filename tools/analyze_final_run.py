@@ -213,6 +213,7 @@ def plot_individual_intervention(
     global_y_max: Optional[float] = None,
     task_length: int = 500000,
     num_tasks: int = 3,
+    metric_type: str = "eval",
 ):
     """
     Plot individual intervention IQM return curve with 95% CI and individual seed traces.
@@ -227,6 +228,7 @@ def plot_individual_intervention(
         global_y_max: Global maximum y-axis value (for consistent scaling)
         task_length: Length of each task in steps (for task boundaries)
         num_tasks: Number of tasks (for task labels)
+        metric_type: "eval" or "train" for labeling
     """
     # Set professional font
     plt.rcParams['font.family'] = 'serif'
@@ -301,7 +303,7 @@ def plot_individual_intervention(
     ax.xaxis.set_major_formatter(FuncFormatter(step_formatter))
     
     ax.set_xlabel('Environment Steps', fontsize=17, fontweight='bold')
-    ax.set_ylabel('eval IQM Return (averaged across tasks)', fontsize=17, fontweight='bold')
+    ax.set_ylabel(f'{metric_type} IQM Return (averaged across tasks)', fontsize=17, fontweight='bold')
     ax.set_title(f'{display_name} – Continual Learning Performance', 
                  fontsize=19, fontweight='bold', pad=20)
     ax.grid(True, alpha=0.25, zorder=0, linestyle='-', linewidth=0.5)
@@ -323,6 +325,7 @@ def plot_combined_interventions(
     out_path: Path,
     task_length: int = 500000,
     num_tasks: int = 3,
+    metric_type: str = "eval",
 ):
     """
     Plot all interventions on one graph for comparison with 95% CI bands.
@@ -374,7 +377,7 @@ def plot_combined_interventions(
     ax.xaxis.set_major_formatter(FuncFormatter(step_formatter))
     
     ax.set_xlabel('Environment Steps', fontsize=17, fontweight='bold')
-    ax.set_ylabel('eval IQM Return (averaged across tasks)', fontsize=17, fontweight='bold')
+    ax.set_ylabel(f'{metric_type} IQM Return (averaged across tasks)', fontsize=17, fontweight='bold')
     ax.set_title('Continual Learning: Comparison of All Interventions', 
                  fontsize=19, fontweight='bold', pad=20)
     ax.grid(True, alpha=0.25, zorder=0, linestyle='-', linewidth=0.5)
@@ -408,12 +411,209 @@ def plot_combined_interventions(
     plt.close(fig)
 
 
+def plot_additional_metrics(
+    all_intervention_data: Dict[str, Dict[str, Any]],
+    out_dir: Path,
+    bootstrap: int,
+    alpha: float,
+    statistic: str,
+    task_length: int = 500000,
+    num_tasks: int = 3,
+    use_optimizer_steps_for_dormant: bool = True,
+):
+    """
+    Create individual per-method plots for forgetting, effective_rank, and dormant_frac.
+    Uses the same aesthetic as the IQM plots with seed traces, task boundaries, etc.
+    
+    Args:
+        all_intervention_data: Dict mapping intervention -> data (including seed_metrics)
+        out_dir: Output directory for plots
+        bootstrap: Number of bootstrap samples
+        alpha: CI alpha level
+        statistic: "mean", "median", or "iqm"
+        task_length: Length of each task in steps
+        num_tasks: Number of tasks
+        use_optimizer_steps_for_dormant: If True, convert dormant_frac x-axis from opt steps to env steps
+    """
+    # Set professional font
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
+    
+    # Metrics to plot: (metric_key, y_label, title_suffix, use_opt_steps_conversion)
+    metrics = [
+        ("forgetting", "Isolated Forgetting", "Isolated Forgetting", False),
+        ("effective_rank_avg", "Effective Rank", "Effective Rank", False),
+        ("dormant_frac", "Dormant Fraction", "Dormant Neuron Fraction", True),
+    ]
+    
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    for intervention, data in sorted(all_intervention_data.items()):
+        display_name = get_display_name(intervention)
+        n_seeds = data["n_seeds"]
+        seed_metrics = data.get("seed_metrics", {})
+        
+        for metric_key, y_label, title_suffix, needs_opt_conversion in metrics:
+            # Collect curves from seeds
+            seed_curves = []
+            seed_curves_dict = {}
+            
+            for seed_id, seed_metric_data in seed_metrics.items():
+                curves = seed_metric_data["curves"]
+                if curves[metric_key][0] is not None:
+                    seed_curves.append(curves[metric_key])
+                    steps, values = curves[metric_key]
+                    seed_curves_dict[seed_id] = (np.array(steps), np.array(values))
+            
+            if not seed_curves:
+                continue  # Skip if no data for this metric
+            
+            # Aggregate curves across seeds
+            aggregated_curve = aggregate_curves_across_seeds(
+                seed_curves, bootstrap, alpha, seed=hash(metric_key) % 10000, statistic=statistic
+            )
+            
+            steps = np.array(aggregated_curve["steps"])
+            central = np.array(aggregated_curve["central"])
+            ci_low = np.array(aggregated_curve["ci_low"])
+            ci_high = np.array(aggregated_curve["ci_high"])
+            
+            # Handle optimizer steps conversion for dormant_frac
+            use_optimizer_steps = needs_opt_conversion and use_optimizer_steps_for_dormant
+            
+            if use_optimizer_steps and len(steps) > 0:
+                # Dormant fraction is logged in optimizer steps, keep it that way
+                # Don't convert - just use the original optimizer steps
+                steps_k = steps / 1000.0  # Just convert to thousands for display
+                x_label = 'Optimizer Steps'
+                
+                # Calculate conversion ratio for task boundaries ONLY
+                max_opt_steps = float(np.max(steps))
+                total_env_steps = num_tasks * task_length
+                conversion_ratio = total_env_steps / max_opt_steps if max_opt_steps > 0 else 1.0
+            else:
+                # Regular environment steps
+                steps_k = steps / 1000.0
+                x_label = 'Environment Steps'
+                conversion_ratio = 1.0  # No conversion needed
+            
+            # Create figure
+            fig, ax = plt.subplots(figsize=(11, 7))
+            color = get_color(intervention)
+            
+            # Plot individual seed curves (thin, transparent)
+            if seed_curves_dict:
+                for seed_idx, (seed_id, (seed_steps, seed_vals)) in enumerate(sorted(seed_curves_dict.items())):
+                    if use_optimizer_steps:
+                        # Keep in optimizer steps (don't convert)
+                        seed_steps_k = seed_steps / 1000.0
+                    else:
+                        seed_steps_k = seed_steps / 1000.0
+                    
+                    label = f'Individual seeds (n={len(seed_curves_dict)})' if seed_idx == 0 else None
+                    ax.plot(seed_steps_k, seed_vals, color=color, linewidth=0.8, alpha=0.25,
+                           zorder=1, label=label)
+            
+            # Plot 95% CI band
+            if n_seeds > 1:
+                ax.fill_between(steps_k, ci_low, ci_high, color=color, alpha=0.35,
+                               label='95% Confidence Interval', zorder=2)
+            
+            # Plot central line (thick, on top)
+            ax.plot(steps_k, central, label=f'{display_name} ({statistic.capitalize()}, n={n_seeds} seeds)',
+                   color=color, linewidth=3.5, zorder=3)
+            
+            # Set consistent x-axis limits
+            if use_optimizer_steps:
+                # For optimizer steps: 0 to max observed * 1.02 for padding
+                x_max = float(np.max(steps_k)) * 1.02
+            else:
+                # For env steps: 0 to total steps
+                x_max = (num_tasks * task_length) / 1000.0
+            
+            ax.set_xlim(0, x_max)
+            
+            # Add task boundaries
+            if not use_optimizer_steps:
+                # Regular environment steps
+                task_boundaries_k = [task_length * k / 1000.0 for k in range(1, num_tasks)]
+            else:
+                # For optimizer steps: convert env step boundaries to optimizer step scale
+                # Boundary in env steps / conversion ratio = boundary in opt steps
+                task_boundaries_k = [(task_length * k / conversion_ratio) / 1000.0 
+                                    for k in range(1, num_tasks)]
+            
+            for boundary_k in task_boundaries_k:
+                ax.axvline(boundary_k, linestyle='--', color='gray', alpha=0.5,
+                          linewidth=1.5, zorder=0)
+            
+            # Add task labels
+            y_min, y_max = ax.get_ylim()
+            label_y = y_min + 0.96 * (y_max - y_min)
+            
+            for k in range(num_tasks):
+                if not use_optimizer_steps:
+                    # Regular environment steps
+                    task_center_k = (k + 0.5) * task_length / 1000.0
+                else:
+                    # For optimizer steps: convert env step task center to optimizer step scale
+                    task_center_k = ((k + 0.5) * task_length / conversion_ratio) / 1000.0
+                
+                ax.text(task_center_k, label_y, f'Task {k+1}',
+                       horizontalalignment='center', verticalalignment='top',
+                       fontsize=16, fontweight='bold', alpha=0.85,
+                       bbox=dict(boxstyle='round,pad=0.4', facecolor='white',
+                                edgecolor='gray', alpha=0.85, linewidth=0.5),
+                       zorder=4)
+            
+            # Format x-axis with custom tick labels
+            from matplotlib.ticker import FuncFormatter
+            if use_optimizer_steps:
+                # For optimizer steps: show raw values (0, 1000, 2000, 3000, 4000)
+                def opt_step_formatter(x, pos):
+                    return f"{int(x * 1000)}"
+                ax.xaxis.set_major_formatter(FuncFormatter(opt_step_formatter))
+                ax.set_xlabel(x_label + ' (×1000)', fontsize=17, fontweight='bold')
+            else:
+                # For environment steps: use standard formatter
+                def step_formatter(x, pos):
+                    return format_steps_label(x)
+                ax.xaxis.set_major_formatter(FuncFormatter(step_formatter))
+                ax.set_xlabel(x_label, fontsize=17, fontweight='bold')
+            
+            # Format y-axis for dormant fraction (show as percentage)
+            if metric_key == "dormant_frac":
+                from matplotlib.ticker import PercentFormatter
+                ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0, decimals=1))
+            
+            # Labels and styling
+            ax.set_ylabel(y_label, fontsize=17, fontweight='bold')
+            ax.set_title(f'{display_name} – {title_suffix}',
+                        fontsize=19, fontweight='bold', pad=20)
+            ax.grid(True, alpha=0.25, zorder=0, linestyle='-', linewidth=0.5)
+            ax.tick_params(labelsize=15)
+            
+            # Legend
+            handles, labels = ax.get_legend_handles_labels()
+            ax.legend(handles, labels, fontsize=11, framealpha=0.95, loc='best',
+                     edgecolor='black', fancybox=True, shadow=True)
+            
+            plt.tight_layout()
+            
+            # Save plot
+            out_path = out_dir / f"{intervention}_{metric_key}.png"
+            fig.savefig(out_path, format='png', dpi=300, bbox_inches='tight')
+            plt.close(fig)
+            
+            print(f"  ✓ Saved {display_name} {title_suffix} plot to {out_path}")
+
 
 def plot_grouped_comparisons(
     all_curves: Dict[str, Dict[str, Any]],
     out_dir: Path,
     task_length: int = 500000,
     num_tasks: int = 3,
+    metric_type: str = "eval",
 ):
     """
     Create three grouped comparison plots: Sparse, Reset-based, Baselines.
@@ -541,7 +741,7 @@ def plot_grouped_comparisons(
         ax.xaxis.set_major_formatter(FuncFormatter(step_formatter))
         
         ax.set_xlabel('Environment Steps', fontsize=17, fontweight='bold')
-        ax.set_ylabel('eval IQM Return (averaged across tasks)', fontsize=17, fontweight='bold')
+        ax.set_ylabel(f'{metric_type} IQM Return (averaged across tasks)', fontsize=17, fontweight='bold')
         ax.set_title(group['title'], fontsize=19, fontweight='bold', pad=20)
         ax.grid(True, alpha=0.25, zorder=0, linestyle='-', linewidth=0.5)
         ax.tick_params(labelsize=15)
@@ -852,6 +1052,7 @@ def run_analysis(runs_dir: Path, out_dir: Path, args, metric_type: str):
             "n_seeds": n_seeds,
             "aggregated_curve": aggregated_curve,
             "seed_curves": seed_curves_dict,
+            "seed_metrics": seed_metrics,  # Store seed metrics for additional plots
             f"final_iqm_return_{args.statistic}": final_iqm_stat,
             "final_iqm_return_ci_low": final_iqm_lo,
             "final_iqm_return_ci_high": final_iqm_hi,
@@ -921,6 +1122,7 @@ def run_analysis(runs_dir: Path, out_dir: Path, args, metric_type: str):
             global_y_max=global_y_max,
             task_length=args.task_length,
             num_tasks=args.num_tasks,
+            metric_type=metric_type,
         )
         print(f"  ✓ Saved {display_name} plot to {out_path}")
     
@@ -931,7 +1133,8 @@ def run_analysis(runs_dir: Path, out_dir: Path, args, metric_type: str):
         all_intervention_data,
         combined_path,
         task_length=args.task_length,
-        num_tasks=args.num_tasks
+        num_tasks=args.num_tasks,
+        metric_type=metric_type,
     )
     print(f"  ✓ Saved combined plot to {combined_path}")
     
@@ -942,9 +1145,34 @@ def run_analysis(runs_dir: Path, out_dir: Path, args, metric_type: str):
         all_intervention_data,
         grouped_dir,
         task_length=args.task_length,
-        num_tasks=args.num_tasks
+        num_tasks=args.num_tasks,
+        metric_type=metric_type,
     )
     print(f"  ✓ Saved grouped comparison plots to {grouped_dir}")
+    
+    # 10.5) Create additional metric plots (forgetting, effective_rank, dormant_frac)
+    # NOTE: These metrics are NOT separate for train vs eval - they represent global training properties:
+    #   - Forgetting: Based on EVAL returns over time
+    #   - Dormant fraction: Measured during TRAINING (optimizer steps)
+    #   - Effective rank: Computed during EVAL phase
+    # Therefore, we only plot these for "eval" mode to avoid duplication
+    if metric_type == "eval":
+        print("\nCreating additional metric plots (forgetting, effective_rank, dormant_frac)...")
+        additional_metrics_dir = out_dir / "additional_metrics"
+        plot_additional_metrics(
+            all_intervention_data,
+            additional_metrics_dir,
+            bootstrap=args.bootstrap,
+            alpha=args.alpha,
+            statistic=args.statistic,
+            task_length=args.task_length,
+            num_tasks=args.num_tasks,
+            use_optimizer_steps_for_dormant=True
+        )
+        print(f"  ✓ Saved additional metric plots to {additional_metrics_dir}")
+    else:
+        print("\n  ℹ Skipping additional metrics for train mode (they're the same as eval mode)")
+
     
     # 11) Create metrics table
     print("\nCreating metrics table...")
@@ -987,8 +1215,11 @@ def run_analysis(runs_dir: Path, out_dir: Path, args, metric_type: str):
     print("ANALYSIS COMPLETE")
     print("=" * 80)
     print(f"\nAll outputs saved to: {out_dir}")
-    print(f"  • {len(all_intervention_data)} individual intervention plots")
+    print(f"  • {len(all_intervention_data)} individual intervention plots ({metric_type.upper()} IQM return)")
+    if metric_type == "eval":
+        print(f"  • {len(all_intervention_data) * 3} additional metric plots (forgetting, effective_rank, dormant_frac)")
     print(f"  • 1 combined comparison plot")
+    print(f"  • 3 grouped comparison plots")
     print(f"  • 1 metrics CSV table")
     print(f"  • 1 formatted metrics text file")
     print()

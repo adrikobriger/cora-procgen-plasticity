@@ -156,19 +156,21 @@ def extract_run_metrics(
 def plot_individual_intervention(
     intervention: str,
     aggregated_curve: Dict[str, List[float]],
-    n_seeds: int,
-    out_path: Path,
+    seed_curves: Optional[Dict[int, Tuple[np.ndarray, np.ndarray]]] = None,
+    n_seeds: int = 1,
+    out_path: Path = None,
     global_y_min: Optional[float] = None,
     global_y_max: Optional[float] = None,
     task_length: int = 500000,
     num_tasks: int = 3,
 ):
     """
-    Plot individual intervention IQM return curve with 95% CI.
+    Plot individual intervention IQM return curve with 95% CI and individual seed traces.
     
     Args:
         intervention: Intervention name
         aggregated_curve: Aggregated curve data with steps, central, ci_low, ci_high
+        seed_curves: Dict mapping seed -> (steps, values) for individual seed traces
         n_seeds: Number of seeds
         out_path: Output file path
         global_y_min: Global minimum y-axis value (for consistent scaling)
@@ -176,6 +178,10 @@ def plot_individual_intervention(
         task_length: Length of each task in steps (for task boundaries)
         num_tasks: Number of tasks (for task labels)
     """
+    # Set professional font
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
+    
     steps = np.array(aggregated_curve["steps"])
     central = np.array(aggregated_curve["central"])
     ci_low = np.array(aggregated_curve["ci_low"])
@@ -183,55 +189,82 @@ def plot_individual_intervention(
 
     # Convert steps to thousands for readability
     steps_k = steps / 1000.0
+    
+    # Smooth the curves using cubic interpolation
+    from scipy.interpolate import interp1d
+    if len(steps_k) > 3:
+        f_central = interp1d(steps_k, central, kind='cubic', fill_value='extrapolate')
+        f_ci_low = interp1d(steps_k, ci_low, kind='cubic', fill_value='extrapolate')
+        f_ci_high = interp1d(steps_k, ci_high, kind='cubic', fill_value='extrapolate')
+        steps_smooth = np.linspace(steps_k.min(), steps_k.max(), len(steps_k) * 3)
+        central_smooth = f_central(steps_smooth)
+        ci_low_smooth = f_ci_low(steps_smooth)
+        ci_high_smooth = f_ci_high(steps_smooth)
+    else:
+        steps_smooth = steps_k
+        central_smooth = central
+        ci_low_smooth = ci_low
+        ci_high_smooth = ci_high
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(11, 7))
     
     color = INTERVENTION_COLORS.get(intervention, "#333333")
     display_name = INTERVENTION_NAMES.get(intervention, intervention.capitalize())
     
-    # Plot mean line
-    ax.plot(steps_k, central, label=display_name, color=color, linewidth=2.5)
+    # Plot individual seed curves as thin lines (if provided)
+    if seed_curves:
+        for seed_idx, (seed, (seed_steps, seed_vals)) in enumerate(sorted(seed_curves.items())):
+            seed_steps_k = seed_steps / 1000.0
+            # Only plot on first iteration for legend
+            ax.plot(seed_steps_k, seed_vals, color=color, linewidth=0.8, alpha=0.25, 
+                   zorder=1, label='Individual seeds' if seed_idx == 0 else None)
     
-    # Plot 95% CI
+    # Plot 95% CI band
     if n_seeds > 1:
-        ax.fill_between(steps_k, ci_low, ci_high, color=color, alpha=0.25, 
-                        label='95% CI')
+        ax.fill_between(steps_smooth, ci_low_smooth, ci_high_smooth, color=color, alpha=0.35, 
+                        label='95% Confidence Interval', zorder=2)
     
-    # Apply global y-limits if provided (do this before adding task labels)
+    # Plot mean line (thick, on top)
+    ax.plot(steps_smooth, central_smooth, label=f'{display_name} (Mean, n={n_seeds} seeds)', 
+            color=color, linewidth=3.5, zorder=3)
+
+    # Apply global y-limits if provided
     if global_y_min is not None and global_y_max is not None:
         ax.set_ylim(global_y_min, global_y_max)
     
     # Add task boundaries: vertical dashed lines
     task_boundaries_k = [task_length * k / 1000.0 for k in range(1, num_tasks)]
     for boundary_k in task_boundaries_k:
-        ax.axvline(boundary_k, linestyle='--', color='black', alpha=0.6, 
+        ax.axvline(boundary_k, linestyle='--', color='black', alpha=0.5, 
                   linewidth=1.5, zorder=1)
     
     # Add task labels: "Task 1", "Task 2", "Task 3"
-    # Position at 95% of y-range
     if global_y_min is not None and global_y_max is not None:
-        label_y = global_y_min + 0.95 * (global_y_max - global_y_min)
+        label_y = global_y_min + 0.92 * (global_y_max - global_y_min)
     else:
-        # Fallback if no global limits
         y_min, y_max = ax.get_ylim()
-        label_y = y_min + 0.95 * (y_max - y_min)
+        label_y = y_min + 0.92 * (y_max - y_min)
     
     for k in range(num_tasks):
-        # Center of task k (0-indexed)
         task_center_k = (k + 0.5) * task_length / 1000.0
         ax.text(task_center_k, label_y, f'Task {k+1}', 
                horizontalalignment='center', verticalalignment='top',
-               fontsize=12, fontweight='normal', alpha=0.8,
-               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
-                        edgecolor='none', alpha=0.7),
+               fontsize=13, fontweight='bold', alpha=0.85,
+               bbox=dict(boxstyle='round,pad=0.4', facecolor='white', 
+                        edgecolor='gray', alpha=0.85, linewidth=0.5),
                zorder=4)
     
-    ax.set_xlabel('Environment Steps (thousands)', fontsize=12)
-    ax.set_ylabel('IQM Return (avg across tasks)', fontsize=12)
-    ax.set_title(f'{display_name} - IQM Return (n={n_seeds} seeds)', 
-                 fontsize=14, fontweight='bold')
-    ax.grid(True, alpha=0.3, zorder=0)
-    ax.legend(fontsize=11, framealpha=0.9)
+    ax.set_xlabel('Environment Steps (thousands)', fontsize=14, fontweight='bold')
+    ax.set_ylabel('IQM Return (averaged across tasks)', fontsize=14, fontweight='bold')
+    ax.set_title(f'{display_name} – Continual Learning Performance', 
+                 fontsize=16, fontweight='bold', pad=20)
+    ax.grid(True, alpha=0.25, zorder=0, linestyle='-', linewidth=0.5)
+    ax.tick_params(labelsize=12)
+    
+    # Improved legend
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles, labels, fontsize=12, framealpha=0.95, loc='lower right', 
+             edgecolor='black', fancybox=True, shadow=True)
     
     plt.tight_layout()
     fig.savefig(out_path, format='png', dpi=300, bbox_inches='tight')
@@ -245,12 +278,18 @@ def plot_combined_interventions(
     num_tasks: int = 3,
 ):
     """
-    Plot all interventions on one graph for comparison.
+    Plot all interventions on one graph for comparison with 95% CI bands.
     """
-    fig, ax = plt.subplots(figsize=(12, 7))
+    # Set professional font
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
+    
+    fig, ax = plt.subplots(figsize=(13, 8))
     
     # Sort interventions for consistent ordering
     sorted_interventions = sorted(all_curves.keys())
+    
+    from scipy.interpolate import interp1d
     
     for intervention in sorted_interventions:
         data = all_curves[intervention]
@@ -265,40 +304,62 @@ def plot_combined_interventions(
         # Convert steps to thousands for readability
         steps_k = steps / 1000.0
         
+        # Smooth curves
+        if len(steps_k) > 3:
+            f_central = interp1d(steps_k, central, kind='cubic', fill_value='extrapolate')
+            f_ci_low = interp1d(steps_k, ci_low, kind='cubic', fill_value='extrapolate')
+            f_ci_high = interp1d(steps_k, ci_high, kind='cubic', fill_value='extrapolate')
+            steps_smooth = np.linspace(steps_k.min(), steps_k.max(), len(steps_k) * 3)
+            central_smooth = f_central(steps_smooth)
+            ci_low_smooth = f_ci_low(steps_smooth)
+            ci_high_smooth = f_ci_high(steps_smooth)
+        else:
+            steps_smooth = steps_k
+            central_smooth = central
+            ci_low_smooth = ci_low
+            ci_high_smooth = ci_high
+        
         color = INTERVENTION_COLORS.get(intervention, "#333333")
         display_name = INTERVENTION_NAMES.get(intervention, intervention.capitalize())
         
-        # Plot mean line with legend showing seed count
-        ax.plot(steps_k, central, label=f'{display_name} (n={n_seeds})', 
-                color=color, linewidth=2.5)
-        
-        # Plot 95% CI
+        # Plot 95% CI band first (behind mean)
         if n_seeds > 1:
-            ax.fill_between(steps_k, ci_low, ci_high, color=color, alpha=0.15)
+            ax.fill_between(steps_smooth, ci_low_smooth, ci_high_smooth, color=color, 
+                           alpha=0.3, zorder=1, label=None)
+        
+        # Plot mean line with legend showing seed count and CI
+        ax.plot(steps_smooth, central_smooth, label=f'{display_name} (n={n_seeds}, 95% CI)', 
+                color=color, linewidth=3.5, zorder=3)
     
-    ax.set_xlabel('Environment Steps (thousands)', fontsize=12)
-    ax.set_ylabel('IQM Return (avg across tasks)', fontsize=12)
-    ax.set_title('All Interventions - IQM Return Comparison', 
-                 fontsize=14, fontweight='bold')
-    ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=11, framealpha=0.9, loc='best')
-    
+    ax.set_xlabel('Environment Steps (thousands)', fontsize=14, fontweight='bold')
+    ax.set_ylabel('IQM Return (averaged across tasks)', fontsize=14, fontweight='bold')
+    ax.set_title('Continual Learning: Comparison of All Interventions', 
+                 fontsize=16, fontweight='bold', pad=20)
+    ax.grid(True, alpha=0.25, zorder=0, linestyle='-', linewidth=0.5)
+    ax.tick_params(labelsize=12)
+
     # Add task boundaries
     task_boundaries_k = [task_length * k / 1000.0 for k in range(1, num_tasks)]
     for boundary_k in task_boundaries_k:
-        ax.axvline(boundary_k, linestyle='--', color='black', alpha=0.6, linewidth=1.5, zorder=1)
-    
-    # Add task labels
+        ax.axvline(boundary_k, linestyle='--', color='black', alpha=0.5, 
+                  linewidth=1.5, zorder=1)
+
+    # Add task labels at 90% (not 95%) to avoid overlap with legend
     y_min, y_max = ax.get_ylim()
-    label_y = y_min + 0.95 * (y_max - y_min)
+    label_y = y_min + 0.88 * (y_max - y_min)
     for k in range(num_tasks):
         task_center_k = (k + 0.5) * task_length / 1000.0
         ax.text(task_center_k, label_y, f'Task {k+1}', 
                horizontalalignment='center', verticalalignment='top',
-               fontsize=12, fontweight='normal', alpha=0.8,
-               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
-                        edgecolor='none', alpha=0.7),
+               fontsize=13, fontweight='bold', alpha=0.85,
+               bbox=dict(boxstyle='round,pad=0.4', facecolor='white', 
+                        edgecolor='gray', alpha=0.85, linewidth=0.5),
                zorder=4)
+    
+    # Legend positioned to avoid blocking text - upper left with good spacing
+    ax.legend(fontsize=11, framealpha=0.95, loc='upper left', 
+             edgecolor='black', fancybox=True, shadow=True, 
+             title='Method (Seeds, Confidence)', title_fontsize=11)
     
     plt.tight_layout()
     fig.savefig(out_path, format='png', dpi=300, bbox_inches='tight')
@@ -361,8 +422,14 @@ def plot_grouped_comparisons(
     # Step 2: Create one plot per group
     out_dir.mkdir(parents=True, exist_ok=True)
     
+    # Set professional font
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
+    
+    from scipy.interpolate import interp1d
+    
     for group in groups:
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(11, 7))
         
         for intervention in group['interventions']:
             if intervention not in all_curves:
@@ -380,16 +447,32 @@ def plot_grouped_comparisons(
             
             steps_k = steps / 1000.0
             
+            # Smooth curves
+            if len(steps_k) > 3:
+                f_central = interp1d(steps_k, central, kind='cubic', fill_value='extrapolate')
+                f_ci_low = interp1d(steps_k, ci_low, kind='cubic', fill_value='extrapolate')
+                f_ci_high = interp1d(steps_k, ci_high, kind='cubic', fill_value='extrapolate')
+                steps_smooth = np.linspace(steps_k.min(), steps_k.max(), len(steps_k) * 3)
+                central_smooth = f_central(steps_smooth)
+                ci_low_smooth = f_ci_low(steps_smooth)
+                ci_high_smooth = f_ci_high(steps_smooth)
+            else:
+                steps_smooth = steps_k
+                central_smooth = central
+                ci_low_smooth = ci_low
+                ci_high_smooth = ci_high
+            
             color = group['colors'].get(intervention, '#333333')
             display_name = INTERVENTION_NAMES.get(intervention, intervention.capitalize())
             
-            # Plot mean line
-            ax.plot(steps_k, central, label=f'{display_name} (n={n_seeds})',
-                   color=color, linewidth=3, zorder=3)
-            
-            # Plot CI band
+            # Plot CI band first (behind)
             if n_seeds > 1:
-                ax.fill_between(steps_k, ci_low, ci_high, color=color, alpha=0.25, zorder=2)
+                ax.fill_between(steps_smooth, ci_low_smooth, ci_high_smooth, color=color, 
+                               alpha=0.35, zorder=1, label=None)
+            
+            # Plot mean line on top
+            ax.plot(steps_smooth, central_smooth, label=f'{display_name} (n={n_seeds}, 95% CI)',
+                   color=color, linewidth=3.5, zorder=3)
         
         # Apply global y-limits
         if global_y_min != float('inf'):
@@ -398,25 +481,27 @@ def plot_grouped_comparisons(
         # Add task boundaries
         task_boundaries_k = [task_length * k / 1000.0 for k in range(1, num_tasks)]
         for boundary_k in task_boundaries_k:
-            ax.axvline(boundary_k, linestyle='--', color='black', alpha=0.6, linewidth=1.5, zorder=1)
+            ax.axvline(boundary_k, linestyle='--', color='black', alpha=0.5, linewidth=1.5, zorder=1)
         
         # Add task labels
         y_min, y_max = ax.get_ylim()
-        label_y = y_min + 0.95 * (y_max - y_min)
+        label_y = y_min + 0.90 * (y_max - y_min)
         for k in range(num_tasks):
             task_center_k = (k + 0.5) * task_length / 1000.0
             ax.text(task_center_k, label_y, f'Task {k+1}', 
                    horizontalalignment='center', verticalalignment='top',
-                   fontsize=12, fontweight='normal', alpha=0.8,
-                   bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
-                            edgecolor='none', alpha=0.7),
+                   fontsize=13, fontweight='bold', alpha=0.85,
+                   bbox=dict(boxstyle='round,pad=0.4', facecolor='white', 
+                            edgecolor='gray', alpha=0.85, linewidth=0.5),
                    zorder=4)
         
-        ax.set_xlabel('Environment Steps (thousands)', fontsize=12)
-        ax.set_ylabel('IQM Return (avg across tasks)', fontsize=12)
-        ax.set_title(group['title'], fontsize=14, fontweight='bold')
-        ax.grid(True, alpha=0.3, zorder=0)
-        ax.legend(fontsize=11, framealpha=0.9)
+        ax.set_xlabel('Environment Steps (thousands)', fontsize=14, fontweight='bold')
+        ax.set_ylabel('IQM Return (averaged across tasks)', fontsize=14, fontweight='bold')
+        ax.set_title(group['title'], fontsize=16, fontweight='bold', pad=20)
+        ax.grid(True, alpha=0.25, zorder=0, linestyle='-', linewidth=0.5)
+        ax.tick_params(labelsize=12)
+        ax.legend(fontsize=12, framealpha=0.95, loc='lower right', 
+                 edgecolor='black', fancybox=True, shadow=True)
         
         plt.tight_layout()
         out_path = out_dir / f"{group['name']}.png"
@@ -662,10 +747,14 @@ def main():
         
         # 6) Aggregate eval IQM curves across seeds
         eval_curves = []
+        seed_curves_dict = {}
         for s in seeds:
             curves = seed_metrics[s]["curves"]
             if curves["eval_iqm"][0] is not None:
                 eval_curves.append(curves["eval_iqm"])
+                # Store individual seed curve
+                steps, values = curves["eval_iqm"]
+                seed_curves_dict[s] = (np.array(steps), np.array(values))
         
         if not eval_curves:
             print(f"  WARNING: No eval IQM curves found for {intervention}")
@@ -679,6 +768,7 @@ def main():
         all_intervention_data[intervention] = {
             "n_seeds": n_seeds,
             "aggregated_curve": aggregated_curve,
+            "seed_curves": seed_curves_dict,
             f"final_iqm_return_{args.statistic}": final_iqm_stat,
             "final_iqm_return_ci_low": final_iqm_lo,
             "final_iqm_return_ci_high": final_iqm_hi,
@@ -741,8 +831,9 @@ def main():
         plot_individual_intervention(
             intervention,
             data["aggregated_curve"],
-            data["n_seeds"],
-            out_path,
+            seed_curves=data.get("seed_curves"),
+            n_seeds=data["n_seeds"],
+            out_path=out_path,
             global_y_min=global_y_min,
             global_y_max=global_y_max,
             task_length=args.task_length,

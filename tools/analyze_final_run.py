@@ -241,6 +241,8 @@ def plot_individual_intervention(
 def plot_combined_interventions(
     all_curves: Dict[str, Dict[str, Any]],
     out_path: Path,
+    task_length: int = 500000,
+    num_tasks: int = 3,
 ):
     """
     Plot all interventions on one graph for comparison.
@@ -281,9 +283,148 @@ def plot_combined_interventions(
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=11, framealpha=0.9, loc='best')
     
+    # Add task boundaries
+    task_boundaries_k = [task_length * k / 1000.0 for k in range(1, num_tasks)]
+    for boundary_k in task_boundaries_k:
+        ax.axvline(boundary_k, linestyle='--', color='black', alpha=0.6, linewidth=1.5, zorder=1)
+    
+    # Add task labels
+    y_min, y_max = ax.get_ylim()
+    label_y = y_min + 0.95 * (y_max - y_min)
+    for k in range(num_tasks):
+        task_center_k = (k + 0.5) * task_length / 1000.0
+        ax.text(task_center_k, label_y, f'Task {k+1}', 
+               horizontalalignment='center', verticalalignment='top',
+               fontsize=12, fontweight='normal', alpha=0.8,
+               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                        edgecolor='none', alpha=0.7),
+               zorder=4)
+    
     plt.tight_layout()
     fig.savefig(out_path, format='png', dpi=300, bbox_inches='tight')
     plt.close(fig)
+
+
+def plot_grouped_comparisons(
+    all_curves: Dict[str, Dict[str, Any]],
+    out_dir: Path,
+    task_length: int = 500000,
+    num_tasks: int = 3,
+):
+    """
+    Create three grouped comparison plots: Sparse, Reset-based, Baselines.
+    Each group shows individual interventions with shared y-axis.
+    """
+    # Define groups
+    groups = [
+        {
+            'name': 'sparse_methods',
+            'title': 'Sparse Methods – IQM Return',
+            'interventions': ['gmp', 'set'],
+            'colors': {'gmp': '#ff7f0e', 'set': '#8c564b'}  # orange, brown
+        },
+        {
+            'name': 'reset_based_methods',
+            'title': 'Reset-Based Methods – IQM Return',
+            'interventions': ['redo', 'partial_reinit'],
+            'colors': {'redo': '#d62728', 'partial_reinit': '#2ca02c'}  # red, green
+        },
+        {
+            'name': 'baselines',
+            'title': 'Baselines – IQM Return',
+            'interventions': ['dense', 'reset'],
+            'colors': {'dense': '#1f77b4', 'reset': '#9467bd'}  # blue, purple
+        }
+    ]
+    
+    # Step 1: Compute global y-limits
+    global_y_min = float('inf')
+    global_y_max = float('-inf')
+    
+    for group in groups:
+        for intervention in group['interventions']:
+            if intervention not in all_curves:
+                continue
+            data = all_curves[intervention]
+            aggregated = data['aggregated_curve']
+            ci_low = np.array(aggregated['ci_low'])
+            ci_high = np.array(aggregated['ci_high'])
+            global_y_min = min(global_y_min, float(np.nanmin(ci_low)))
+            global_y_max = max(global_y_max, float(np.nanmax(ci_high)))
+    
+    # Add padding
+    if global_y_min != float('inf'):
+        y_range = global_y_max - global_y_min
+        global_y_min -= 0.05 * y_range
+        global_y_max += 0.05 * y_range
+    
+    # Step 2: Create one plot per group
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    for group in groups:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        for intervention in group['interventions']:
+            if intervention not in all_curves:
+                print(f"  ⚠ {intervention} not found, skipping")
+                continue
+            
+            data = all_curves[intervention]
+            aggregated = data['aggregated_curve']
+            n_seeds = data['n_seeds']
+            
+            steps = np.array(aggregated['steps'])
+            central = np.array(aggregated['central'])
+            ci_low = np.array(aggregated['ci_low'])
+            ci_high = np.array(aggregated['ci_high'])
+            
+            steps_k = steps / 1000.0
+            
+            color = group['colors'].get(intervention, '#333333')
+            display_name = INTERVENTION_NAMES.get(intervention, intervention.capitalize())
+            
+            # Plot mean line
+            ax.plot(steps_k, central, label=f'{display_name} (n={n_seeds})',
+                   color=color, linewidth=3, zorder=3)
+            
+            # Plot CI band
+            if n_seeds > 1:
+                ax.fill_between(steps_k, ci_low, ci_high, color=color, alpha=0.25, zorder=2)
+        
+        # Apply global y-limits
+        if global_y_min != float('inf'):
+            ax.set_ylim(global_y_min, global_y_max)
+        
+        # Add task boundaries
+        task_boundaries_k = [task_length * k / 1000.0 for k in range(1, num_tasks)]
+        for boundary_k in task_boundaries_k:
+            ax.axvline(boundary_k, linestyle='--', color='black', alpha=0.6, linewidth=1.5, zorder=1)
+        
+        # Add task labels
+        y_min, y_max = ax.get_ylim()
+        label_y = y_min + 0.95 * (y_max - y_min)
+        for k in range(num_tasks):
+            task_center_k = (k + 0.5) * task_length / 1000.0
+            ax.text(task_center_k, label_y, f'Task {k+1}', 
+                   horizontalalignment='center', verticalalignment='top',
+                   fontsize=12, fontweight='normal', alpha=0.8,
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                            edgecolor='none', alpha=0.7),
+                   zorder=4)
+        
+        ax.set_xlabel('Environment Steps (thousands)', fontsize=12)
+        ax.set_ylabel('IQM Return (avg across tasks)', fontsize=12)
+        ax.set_title(group['title'], fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3, zorder=0)
+        ax.legend(fontsize=11, framealpha=0.9)
+        
+        plt.tight_layout()
+        out_path = out_dir / f"{group['name']}.png"
+        fig.savefig(out_path, format='png', dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"  ✓ Saved {group['name']} plot to {out_path}")
+    
+    return len(groups)
 
 
 def create_metrics_table(
@@ -612,10 +753,26 @@ def main():
     # 9) Create combined plot with all interventions
     print("\nCreating combined plot...")
     combined_path = out_dir / "all_interventions_combined.png"
-    plot_combined_interventions(all_intervention_data, combined_path)
+    plot_combined_interventions(
+        all_intervention_data,
+        combined_path,
+        task_length=args.task_length,
+        num_tasks=args.num_tasks
+    )
     print(f"  ✓ Saved combined plot to {combined_path}")
     
-    # 10) Create metrics table
+    # 10) Create grouped comparison plots
+    print("\nCreating grouped comparison plots...")
+    grouped_dir = out_dir / "grouped_comparisons"
+    plot_grouped_comparisons(
+        all_intervention_data,
+        grouped_dir,
+        task_length=args.task_length,
+        num_tasks=args.num_tasks
+    )
+    print(f"  ✓ Saved grouped comparison plots to {grouped_dir}")
+    
+    # 11) Create metrics table
     print("\nCreating metrics table...")
     metrics_df = create_metrics_table(
         all_intervention_data,

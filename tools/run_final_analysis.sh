@@ -144,17 +144,6 @@ for RUNS_DIR in "${RUNS_DIRS[@]}"; do
         --bootstrap "$BOOTSTRAP" \
         --statistic "$STATISTIC" \
         $VERBOSE
-
-    "$PYTHON" "${SCRIPT_DIR}/plot_iqm_return.py" \
-        --runs_dir "$RUNS_DIR" \
-        --out_dir "$OUT_DIR" \
-        --legacy_average \
-        --grouped_comparisons \
-        --tag_prefix "$TAG_PREFIX" \
-        --num_tasks "$NUM_TASKS" \
-        --task_length "$TASK_LENGTH" \
-        --min_points "$MIN_POINTS" \
-        --formats png
 done
 
 echo ""

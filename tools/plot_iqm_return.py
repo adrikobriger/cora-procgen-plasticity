@@ -762,6 +762,9 @@ def _plot_ablation_grid(
         panel_title = panel.get('title', f'Panel {panel_idx+1}')
         series_style_cycle = iter(default_colors)
         panel_x_values = None
+        panel_x_min = float('inf')
+        panel_x_max = float('-inf')
+        
         for series in panel.get('series', []):
             method_name = series.get('method')
             label = series.get('label') or method_name
@@ -785,11 +788,37 @@ def _plot_ablation_grid(
                 legend_handles.append(Line2D([], [], color=color, linewidth=2.5))
                 legend_labels.append(label)
             panel_x_values = x_values
+            panel_x_min = min(panel_x_min, x_values.min())
+            panel_x_max = max(panel_x_max, x_values.max())
 
         ax.set_title(panel_title, fontsize=12, fontweight='semibold')
         ax.set_xlabel(common_xlabel)
         ax.set_ylabel(common_ylabel if panel_idx % cols == 0 else '')
         ax.grid(True, alpha=0.3)
+        
+        # Add task boundaries and labels
+        if args.task_length > 0 and panel_x_min != float('inf'):
+            num_tasks = int(args.num_tasks) if args.num_tasks is not None else int(np.ceil((panel_x_max * x_scale) / args.task_length))
+            
+            # Draw vertical lines at task boundaries
+            for k in range(1, num_tasks + 1):
+                boundary = (k * args.task_length) / x_scale
+                if panel_x_min < boundary <= panel_x_max:
+                    ax.axvline(boundary, linestyle='--', color='black', alpha=0.6, linewidth=1.5, zorder=1)
+            
+            # Add task labels at 95% of y-range
+            y_min, y_max = ax.get_ylim()
+            label_y = y_min + 0.95 * (y_max - y_min)
+            for k in range(num_tasks):
+                task_center = ((k + 0.5) * args.task_length) / x_scale
+                if panel_x_min < task_center < panel_x_max:
+                    ax.text(task_center, label_y, f'Task {k+1}', 
+                           horizontalalignment='center', verticalalignment='top',
+                           fontsize=11, fontweight='normal', alpha=0.8,
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                                    edgecolor='none', alpha=0.7),
+                           zorder=4)
+        
         if panel_x_values is not None:
             ax.set_xlim(panel_x_values.min(), panel_x_values.max())
         panel_ylim = panel.get('ylim')
@@ -1363,7 +1392,10 @@ def plot_grouped_comparisons(
     grid_step: int = 50000,
 ) -> int:
     """
-    Create three grouped comparison plots showing mean IQM return only (no CI).
+    Create three grouped comparison plots showing mean IQM return with individual seed traces.
+    
+    For each method, uses up to 5 seeds (selected by sorting seed numbers), plots individual
+    seed curves as thin semi-transparent lines, and overlays the mean as a thick opaque line.
     All plots use the same y-axis limits for direct comparability.
     
     Groups:
@@ -1420,21 +1452,27 @@ def plot_grouped_comparisons(
                 print(f"  ⚠ Method '{method_name}' has no seed data, skipping")
                 continue
             
+            # Select up to 5 seeds (first 5 when sorted by seed number)
+            selected_seeds = sorted(seed_data.keys())[:5]
+            selected_seed_data = {seed: seed_data[seed] for seed in selected_seeds}
+            
             # Align and interpolate to common grid
-            grid, aligned = align_and_interpolate(seed_data, grid_step)
+            grid, aligned = align_and_interpolate(selected_seed_data, grid_step)
             
             if len(grid) == 0:
                 print(f"  ⚠ Method '{method_name}' has no overlapping data, skipping")
                 continue
             
-            # Compute mean across seeds
+            # Compute mean across selected seeds
             mean = aligned.mean(axis=0)
             
-            # Store for later
+            # Store for later (including individual seeds for plotting)
             method_means[method_name] = {
                 'grid': grid,
                 'mean': mean,
-                'num_seeds': len(seed_data)
+                'aligned': aligned,  # Individual seed curves for plotting
+                'num_seeds': len(selected_seed_data),
+                'total_seeds': len(seed_data)  # Track total available
             }
             
             # Update global y-limits
@@ -1473,16 +1511,24 @@ def plot_grouped_comparisons(
             data = method_means[method_name]
             grid = data['grid']
             mean = data['mean']
+            aligned = data['aligned']  # Individual seed curves
             color = group['colors'].get(method_name, '#333333')
             
             # Convert to thousands for x-axis
             grid_k = grid / 1000.0
             
-            # Plot mean line only (no CI)
-            ax.plot(grid_k, mean, label=f"{method_name} (n={data['num_seeds']})", 
+            # First, plot individual seed curves as thin lines with low alpha
+            for seed_idx in range(aligned.shape[0]):
+                seed_curve = aligned[seed_idx]
+                ax.plot(grid_k, seed_curve, color=color, linewidth=0.8, alpha=0.3, 
+                       zorder=2, label=None)
+            
+            # Then plot mean line on top (thick, full opacity)
+            num_total = data.get('total_seeds', data['num_seeds'])
+            ax.plot(grid_k, mean, label=f"{method_name} (n={data['num_seeds']}/{num_total})", 
                    color=color, linewidth=3, zorder=3)
             
-            print(f"  ✓ Added {method_name} (n={data['num_seeds']} seeds)")
+            print(f"  ✓ Added {method_name} (using {data['num_seeds']}/{num_total} seeds)")
         
         # CRITICAL: Apply global y-limits
         ax.set_ylim(global_y_min, global_y_max)

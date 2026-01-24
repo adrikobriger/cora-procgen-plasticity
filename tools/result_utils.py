@@ -173,8 +173,46 @@ def _task_avg_from_matching_tags(scalars: Dict[str, List[Tuple[int, float]]], in
 
 
 def extract_task_avg_eval_iqm_curve(scalars: Dict[str, List[Tuple[int, float]]]) -> Optional[Tuple[List[int], List[float]]]:
-    # match tags like 'eval', 'iqm', 'eval_reward'
-    return _task_avg_from_matching_tags(scalars, ['eval', 'iqm', 'eval_reward'])
+    # match tags like 'eval_reward_iqm/task_*' or 'eval/iqm/task_*'
+    # prioritize tags containing 'eval' to avoid matching 'train_reward_iqm'
+    # ONLY include on-distribution tasks: /0, /2, /4 (exclude off-distribution generalization)
+    
+    # First, find all candidate tags
+    candidate_tags = [t for t in scalars.keys() if any(s in t.lower() for s in ['eval_reward_iqm', 'eval_iqm', 'eval'])]
+    
+    # Filter to only keep on-distribution task indices: 0, 2, 4
+    import re
+    on_dist_tasks = {'0', '2', '4'}
+    filtered_tags = []
+    
+    for tag in candidate_tags:
+        # Look for patterns like /0, /2, /4 or _0, _2, _4 or task_0, task_2, task_4
+        match = re.search(r'[/_](?:task[/_]?)?(\d+)$', tag)
+        if match and match.group(1) in on_dist_tasks:
+            filtered_tags.append(tag)
+    
+    if not filtered_tags:
+        return None
+    
+    # Build step -> list of values (average across the on-distribution tasks)
+    from collections import defaultdict
+    step_vals = defaultdict(list)
+    for tag in filtered_tags:
+        for step, val in scalars[tag]:
+            step_vals[int(step)].append(float(val))
+    
+    if not step_vals:
+        return None
+    
+    steps = sorted(step_vals.keys())
+    vals = [float(np.mean(step_vals[s])) for s in steps]
+    return steps, vals
+
+
+def extract_task_avg_train_iqm_curve(scalars: Dict[str, List[Tuple[int, float]]]) -> Optional[Tuple[List[int], List[float]]]:
+    # match tags like 'train_reward_iqm/task_*' or 'train/iqm/task_*'
+    # specifically target training metrics
+    return _task_avg_from_matching_tags(scalars, ['train_reward_iqm', 'train_iqm', 'train'])
 
 
 def extract_task_avg_dormant_frac_curve(scalars: Dict[str, List[Tuple[int, float]]]) -> Optional[Tuple[List[int], List[float]]]:

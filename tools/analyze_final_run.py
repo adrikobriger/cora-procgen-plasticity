@@ -33,6 +33,7 @@ from result_utils import (
     load_scalars,
     get_curve,
     extract_task_avg_eval_iqm_curve,
+    extract_task_avg_train_iqm_curve,
     extract_task_avg_dormant_frac_curve,
     bootstrap_ci,
     aggregate_curves_across_seeds,
@@ -47,7 +48,25 @@ INTERVENTION_NAMES = {
     "redo": "ReDo",
     "reset": "Reset",
     "set": "SET",
+    # Handle variants
+    "gmp_one_layer": "GMP (One Layer)",
+    "gmp_whole_network": "GMP (Whole Network)",
+    "set_one_layer": "SET (One Layer)",
+    "set_whole_network": "SET (Whole Network)",
 }
+
+def get_display_name(intervention: str) -> str:
+    """Get display name for intervention, handling dynamic variants."""
+    if intervention in INTERVENTION_NAMES:
+        return INTERVENTION_NAMES[intervention]
+    # Handle dynamic variants like method_variant
+    parts = intervention.split('_', 1)
+    if len(parts) == 2:
+        method, variant = parts
+        base_name = INTERVENTION_NAMES.get(method, method.capitalize())
+        variant_name = variant.replace('_', ' ').title()
+        return f"{base_name} ({variant_name})"
+    return intervention.replace('_', ' ').title()
 
 # Color scheme for interventions
 INTERVENTION_COLORS = {
@@ -57,7 +76,20 @@ INTERVENTION_COLORS = {
     "redo": "#d62728",       # red
     "reset": "#9467bd",      # purple
     "set": "#8c564b",        # brown
+    # Variants
+    "gmp_one_layer": "#ff7f0e",
+    "gmp_whole_network": "#ff9f4e",
+    "set_one_layer": "#8c564b",
+    "set_whole_network": "#bc766b",
 }
+
+def get_color(intervention: str) -> str:
+    """Get color for intervention, with fallback for dynamic variants."""
+    if intervention in INTERVENTION_COLORS:
+        return INTERVENTION_COLORS[intervention]
+    # Fallback: use base method color if available
+    base = intervention.split('_')[0]
+    return INTERVENTION_COLORS.get(base, "#333333")
 
 
 def choose_best_event_file(files: List[str]) -> str:
@@ -78,15 +110,25 @@ def choose_best_event_file(files: List[str]) -> str:
 def extract_run_metrics(
     scalars: Dict[str, List[Tuple[int, float]]],
     last_k_rank: int = 10,
+    metric_type: str = "eval",
 ) -> Dict[str, Any]:
     """
     Extract per-seed metrics from one TensorBoard run (one event file).
     
+    Args:
+        scalars: Scalar data from TensorBoard
+        last_k_rank: Number of last points to average for effective rank
+        metric_type: "eval" for eval_reward_iqm or "train" for train_reward_iqm
+    
     Returns dict with per-seed summary scalars and curves for aggregation.
     """
 
-    # ---- task-avg eval IQM curve ----
-    eval_curve = extract_task_avg_eval_iqm_curve(scalars)
+    # ---- task-avg IQM curve (eval or train) ----
+    if metric_type == "train":
+        iqm_curve = extract_task_avg_train_iqm_curve(scalars)
+    else:
+        iqm_curve = extract_task_avg_eval_iqm_curve(scalars)
+    eval_curve = iqm_curve
     if eval_curve is not None:
         eval_steps, eval_vals = eval_curve
         final_iqm = float(eval_vals[-1])  # LAST value
@@ -153,6 +195,14 @@ def extract_run_metrics(
     }
 
 
+def format_steps_label(steps_k):
+    """Convert steps in thousands to clean labels (800k, 900k, 1M, 1.1M)."""
+    if steps_k < 1000:
+        return f"{steps_k:.0f}k"
+    else:
+        return f"{steps_k / 1000:.1f}M".rstrip('0').rstrip('.')
+
+
 def plot_individual_intervention(
     intervention: str,
     aggregated_curve: Dict[str, List[float]],
@@ -190,26 +240,16 @@ def plot_individual_intervention(
     # Convert steps to thousands for readability
     steps_k = steps / 1000.0
     
-    # Smooth the curves using cubic interpolation
-    from scipy.interpolate import interp1d
-    if len(steps_k) > 3:
-        f_central = interp1d(steps_k, central, kind='cubic', fill_value='extrapolate')
-        f_ci_low = interp1d(steps_k, ci_low, kind='cubic', fill_value='extrapolate')
-        f_ci_high = interp1d(steps_k, ci_high, kind='cubic', fill_value='extrapolate')
-        steps_smooth = np.linspace(steps_k.min(), steps_k.max(), len(steps_k) * 3)
-        central_smooth = f_central(steps_smooth)
-        ci_low_smooth = f_ci_low(steps_smooth)
-        ci_high_smooth = f_ci_high(steps_smooth)
-    else:
-        steps_smooth = steps_k
-        central_smooth = central
-        ci_low_smooth = ci_low
-        ci_high_smooth = ci_high
+    # No smoothing - use raw data directly
+    steps_plot = steps_k
+    central_plot = central
+    ci_low_plot = ci_low
+    ci_high_plot = ci_high
 
     fig, ax = plt.subplots(figsize=(11, 7))
     
-    color = INTERVENTION_COLORS.get(intervention, "#333333")
-    display_name = INTERVENTION_NAMES.get(intervention, intervention.capitalize())
+    color = get_color(intervention)
+    display_name = get_display_name(intervention)
     
     # Plot individual seed curves as thin lines (if provided)
     if seed_curves:
@@ -221,11 +261,11 @@ def plot_individual_intervention(
     
     # Plot 95% CI band
     if n_seeds > 1:
-        ax.fill_between(steps_smooth, ci_low_smooth, ci_high_smooth, color=color, alpha=0.35, 
+        ax.fill_between(steps_plot, ci_low_plot, ci_high_plot, color=color, alpha=0.35, 
                         label='95% Confidence Interval', zorder=2)
     
     # Plot mean line (thick, on top)
-    ax.plot(steps_smooth, central_smooth, label=f'{display_name} (Mean, n={n_seeds} seeds)', 
+    ax.plot(steps_plot, central_plot, label=f'{display_name} (Mean, n={n_seeds} seeds)', 
             color=color, linewidth=3.5, zorder=3)
 
     # Apply global y-limits if provided
@@ -240,35 +280,42 @@ def plot_individual_intervention(
     
     # Add task labels: "Task 1", "Task 2", "Task 3"
     if global_y_min is not None and global_y_max is not None:
-        label_y = global_y_min + 0.92 * (global_y_max - global_y_min)
+        label_y = global_y_min + 0.96 * (global_y_max - global_y_min)
     else:
         y_min, y_max = ax.get_ylim()
-        label_y = y_min + 0.92 * (y_max - y_min)
+        label_y = y_min + 0.96 * (y_max - y_min)
     
     for k in range(num_tasks):
         task_center_k = (k + 0.5) * task_length / 1000.0
         ax.text(task_center_k, label_y, f'Task {k+1}', 
                horizontalalignment='center', verticalalignment='top',
-               fontsize=13, fontweight='bold', alpha=0.85,
+               fontsize=16, fontweight='bold', alpha=0.85,
                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', 
                         edgecolor='gray', alpha=0.85, linewidth=0.5),
                zorder=4)
     
-    ax.set_xlabel('Environment Steps (thousands)', fontsize=14, fontweight='bold')
-    ax.set_ylabel('IQM Return (averaged across tasks)', fontsize=14, fontweight='bold')
-    ax.set_title(f'{display_name} – Continual Learning Performance', 
-                 fontsize=16, fontweight='bold', pad=20)
-    ax.grid(True, alpha=0.25, zorder=0, linestyle='-', linewidth=0.5)
-    ax.tick_params(labelsize=12)
+    # Format x-axis with custom tick labels
+    from matplotlib.ticker import FuncFormatter
+    def step_formatter(x, pos):
+        return format_steps_label(x)
+    ax.xaxis.set_major_formatter(FuncFormatter(step_formatter))
     
-    # Improved legend
+    ax.set_xlabel('Environment Steps', fontsize=17, fontweight='bold')
+    ax.set_ylabel('eval IQM Return (averaged across tasks)', fontsize=17, fontweight='bold')
+    ax.set_title(f'{display_name} – Continual Learning Performance', 
+                 fontsize=19, fontweight='bold', pad=20)
+    ax.grid(True, alpha=0.25, zorder=0, linestyle='-', linewidth=0.5)
+    ax.tick_params(labelsize=15)
+    
+    # Improved legend - smaller font, bottom right position
     handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles, labels, fontsize=12, framealpha=0.95, loc='lower right', 
+    ax.legend(handles, labels, fontsize=11, framealpha=0.95, loc='lower left', 
              edgecolor='black', fancybox=True, shadow=True)
     
     plt.tight_layout()
     fig.savefig(out_path, format='png', dpi=300, bbox_inches='tight')
     plt.close(fig)
+
 
 
 def plot_combined_interventions(
@@ -289,8 +336,6 @@ def plot_combined_interventions(
     # Sort interventions for consistent ordering
     sorted_interventions = sorted(all_curves.keys())
     
-    from scipy.interpolate import interp1d
-    
     for intervention in sorted_interventions:
         data = all_curves[intervention]
         aggregated = data["aggregated_curve"]
@@ -304,39 +349,36 @@ def plot_combined_interventions(
         # Convert steps to thousands for readability
         steps_k = steps / 1000.0
         
-        # Smooth curves
-        if len(steps_k) > 3:
-            f_central = interp1d(steps_k, central, kind='cubic', fill_value='extrapolate')
-            f_ci_low = interp1d(steps_k, ci_low, kind='cubic', fill_value='extrapolate')
-            f_ci_high = interp1d(steps_k, ci_high, kind='cubic', fill_value='extrapolate')
-            steps_smooth = np.linspace(steps_k.min(), steps_k.max(), len(steps_k) * 3)
-            central_smooth = f_central(steps_smooth)
-            ci_low_smooth = f_ci_low(steps_smooth)
-            ci_high_smooth = f_ci_high(steps_smooth)
-        else:
-            steps_smooth = steps_k
-            central_smooth = central
-            ci_low_smooth = ci_low
-            ci_high_smooth = ci_high
+        # No smoothing - use raw data directly
+        steps_plot = steps_k
+        central_plot = central
+        ci_low_plot = ci_low
+        ci_high_plot = ci_high
         
-        color = INTERVENTION_COLORS.get(intervention, "#333333")
-        display_name = INTERVENTION_NAMES.get(intervention, intervention.capitalize())
+        color = get_color(intervention)
+        display_name = get_display_name(intervention)
         
         # Plot 95% CI band first (behind mean)
         if n_seeds > 1:
-            ax.fill_between(steps_smooth, ci_low_smooth, ci_high_smooth, color=color, 
+            ax.fill_between(steps_plot, ci_low_plot, ci_high_plot, color=color, 
                            alpha=0.3, zorder=1, label=None)
         
         # Plot mean line with legend showing seed count and CI
-        ax.plot(steps_smooth, central_smooth, label=f'{display_name} (n={n_seeds}, 95% CI)', 
+        ax.plot(steps_plot, central_plot, label=f'{display_name} (n={n_seeds}, 95% CI)', 
                 color=color, linewidth=3.5, zorder=3)
     
-    ax.set_xlabel('Environment Steps (thousands)', fontsize=14, fontweight='bold')
-    ax.set_ylabel('IQM Return (averaged across tasks)', fontsize=14, fontweight='bold')
+    # Format x-axis with custom tick labels
+    from matplotlib.ticker import FuncFormatter
+    def step_formatter(x, pos):
+        return format_steps_label(x)
+    ax.xaxis.set_major_formatter(FuncFormatter(step_formatter))
+    
+    ax.set_xlabel('Environment Steps', fontsize=17, fontweight='bold')
+    ax.set_ylabel('eval IQM Return (averaged across tasks)', fontsize=17, fontweight='bold')
     ax.set_title('Continual Learning: Comparison of All Interventions', 
-                 fontsize=16, fontweight='bold', pad=20)
+                 fontsize=19, fontweight='bold', pad=20)
     ax.grid(True, alpha=0.25, zorder=0, linestyle='-', linewidth=0.5)
-    ax.tick_params(labelsize=12)
+    ax.tick_params(labelsize=15)
 
     # Add task boundaries
     task_boundaries_k = [task_length * k / 1000.0 for k in range(1, num_tasks)]
@@ -344,26 +386,27 @@ def plot_combined_interventions(
         ax.axvline(boundary_k, linestyle='--', color='black', alpha=0.5, 
                   linewidth=1.5, zorder=1)
 
-    # Add task labels at 90% (not 95%) to avoid overlap with legend
+    # Add task labels higher to avoid covering plot
     y_min, y_max = ax.get_ylim()
-    label_y = y_min + 0.88 * (y_max - y_min)
+    label_y = y_min + 0.92 * (y_max - y_min)
     for k in range(num_tasks):
         task_center_k = (k + 0.5) * task_length / 1000.0
         ax.text(task_center_k, label_y, f'Task {k+1}', 
-               horizontalalignment='center', verticalalignment='top',
-               fontsize=13, fontweight='bold', alpha=0.85,
+               horizontalalignment='center', verticalalignment='bottom',
+               fontsize=16, fontweight='bold', alpha=0.85,
                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', 
                         edgecolor='gray', alpha=0.85, linewidth=0.5),
                zorder=4)
     
-    # Legend positioned to avoid blocking text - upper left with good spacing
-    ax.legend(fontsize=11, framealpha=0.95, loc='upper left', 
-             edgecolor='black', fancybox=True, shadow=True, 
+    # Legend - placed outside the plot on the right
+    ax.legend(fontsize=11, framealpha=0.95, loc='center left', 
+             bbox_to_anchor=(1.02, 0.5), edgecolor='black', fancybox=True, shadow=True, 
              title='Method (Seeds, Confidence)', title_fontsize=11)
     
     plt.tight_layout()
     fig.savefig(out_path, format='png', dpi=300, bbox_inches='tight')
     plt.close(fig)
+
 
 
 def plot_grouped_comparisons(
@@ -426,14 +469,19 @@ def plot_grouped_comparisons(
     plt.rcParams['font.family'] = 'serif'
     plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
     
-    from scipy.interpolate import interp1d
     
     for group in groups:
+        # Check if ANY intervention in this group exists
+        group_has_data = any(intervention in all_curves for intervention in group['interventions'])
+        if not group_has_data:
+            print(f"  ⚠ Skipping group '{group['name']}' - no interventions found")
+            continue
+        
         fig, ax = plt.subplots(figsize=(11, 7))
         
         for intervention in group['interventions']:
             if intervention not in all_curves:
-                print(f"  ⚠ {intervention} not found, skipping")
+                print(f"  ⚠ {intervention} not found in this run, skipping")
                 continue
             
             data = all_curves[intervention]
@@ -447,31 +495,22 @@ def plot_grouped_comparisons(
             
             steps_k = steps / 1000.0
             
-            # Smooth curves
-            if len(steps_k) > 3:
-                f_central = interp1d(steps_k, central, kind='cubic', fill_value='extrapolate')
-                f_ci_low = interp1d(steps_k, ci_low, kind='cubic', fill_value='extrapolate')
-                f_ci_high = interp1d(steps_k, ci_high, kind='cubic', fill_value='extrapolate')
-                steps_smooth = np.linspace(steps_k.min(), steps_k.max(), len(steps_k) * 3)
-                central_smooth = f_central(steps_smooth)
-                ci_low_smooth = f_ci_low(steps_smooth)
-                ci_high_smooth = f_ci_high(steps_smooth)
-            else:
-                steps_smooth = steps_k
-                central_smooth = central
-                ci_low_smooth = ci_low
-                ci_high_smooth = ci_high
+            # No smoothing - use raw data directly
+            steps_plot = steps_k
+            central_plot = central
+            ci_low_plot = ci_low
+            ci_high_plot = ci_high
             
             color = group['colors'].get(intervention, '#333333')
             display_name = INTERVENTION_NAMES.get(intervention, intervention.capitalize())
             
             # Plot CI band first (behind)
             if n_seeds > 1:
-                ax.fill_between(steps_smooth, ci_low_smooth, ci_high_smooth, color=color, 
+                ax.fill_between(steps_plot, ci_low_plot, ci_high_plot, color=color, 
                                alpha=0.35, zorder=1, label=None)
             
             # Plot mean line on top
-            ax.plot(steps_smooth, central_smooth, label=f'{display_name} (n={n_seeds}, 95% CI)',
+            ax.plot(steps_plot, central_plot, label=f'{display_name} (n={n_seeds}, 95% CI)',
                    color=color, linewidth=3.5, zorder=3)
         
         # Apply global y-limits
@@ -485,22 +524,28 @@ def plot_grouped_comparisons(
         
         # Add task labels
         y_min, y_max = ax.get_ylim()
-        label_y = y_min + 0.90 * (y_max - y_min)
+        label_y = y_min + 0.95 * (y_max - y_min)
         for k in range(num_tasks):
             task_center_k = (k + 0.5) * task_length / 1000.0
             ax.text(task_center_k, label_y, f'Task {k+1}', 
                    horizontalalignment='center', verticalalignment='top',
-                   fontsize=13, fontweight='bold', alpha=0.85,
+                   fontsize=16, fontweight='bold', alpha=0.85,
                    bbox=dict(boxstyle='round,pad=0.4', facecolor='white', 
                             edgecolor='gray', alpha=0.85, linewidth=0.5),
                    zorder=4)
         
-        ax.set_xlabel('Environment Steps (thousands)', fontsize=14, fontweight='bold')
-        ax.set_ylabel('IQM Return (averaged across tasks)', fontsize=14, fontweight='bold')
-        ax.set_title(group['title'], fontsize=16, fontweight='bold', pad=20)
+        # Format x-axis with custom tick labels
+        from matplotlib.ticker import FuncFormatter
+        def step_formatter(x, pos):
+            return format_steps_label(x)
+        ax.xaxis.set_major_formatter(FuncFormatter(step_formatter))
+        
+        ax.set_xlabel('Environment Steps', fontsize=17, fontweight='bold')
+        ax.set_ylabel('eval IQM Return (averaged across tasks)', fontsize=17, fontweight='bold')
+        ax.set_title(group['title'], fontsize=19, fontweight='bold', pad=20)
         ax.grid(True, alpha=0.25, zorder=0, linestyle='-', linewidth=0.5)
-        ax.tick_params(labelsize=12)
-        ax.legend(fontsize=12, framealpha=0.95, loc='lower right', 
+        ax.tick_params(labelsize=15)
+        ax.legend(fontsize=11, framealpha=0.95, loc='lower left', 
                  edgecolor='black', fancybox=True, shadow=True)
         
         plt.tight_layout()
@@ -510,6 +555,7 @@ def plot_grouped_comparisons(
         print(f"  ✓ Saved {group['name']} plot to {out_path}")
     
     return len(groups)
+
 
 
 def create_metrics_table(
@@ -528,7 +574,7 @@ def create_metrics_table(
     for intervention in sorted_interventions:
         data = all_metrics[intervention]
         n_seeds = data["n_seeds"]
-        display_name = INTERVENTION_NAMES.get(intervention, intervention.capitalize())
+        display_name = get_display_name(intervention)
         
         row = {
             "Intervention": display_name,
@@ -619,26 +665,51 @@ def main():
         action="store_true",
         help="Print detailed progress information",
     )
+    parser.add_argument(
+        "--metric-type",
+        type=str,
+        default="both",
+        choices=["eval", "train", "both"],
+        help="Metric type to analyze: 'eval' for eval_reward_iqm, 'train' for train_reward_iqm, or 'both' for separate analyses",
+    )
     
     args = parser.parse_args()
     
     # Convert to absolute paths
     runs_dir = Path(args.runs_dir).resolve()
-    out_dir = Path(args.out_dir).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
+    base_out_dir = Path(args.out_dir).resolve()
     
     if not runs_dir.exists():
         print(f"ERROR: Runs directory does not exist: {runs_dir}")
         sys.exit(1)
     
-    print("=" * 80)
-    print("ANALYZING FINAL RUN RESULTS")
-    print("=" * 80)
-    print(f"Runs directory: {runs_dir}")
-    print(f"Output directory: {out_dir}")
-    print(f"Bootstrap samples: {args.bootstrap}")
-    print(f"Statistic: {args.statistic}")
-    print()
+    # Determine which metric types to run
+    metric_types = []
+    if args.metric_type == "both":
+        metric_types = ["eval", "train"]
+    else:
+        metric_types = [args.metric_type]
+    
+    for metric_type in metric_types:
+        # Create separate output directory for each metric type
+        out_dir = base_out_dir / metric_type
+        out_dir.mkdir(parents=True, exist_ok=True)
+        
+        print("="* 80)
+        print(f"ANALYZING FINAL RUN RESULTS - {metric_type.upper()} METRICS")
+        print("=" * 80)
+        print(f"Runs directory: {runs_dir}")
+        print(f"Output directory: {out_dir}")
+        print(f"Metric type: {metric_type}_reward_iqm")
+        print(f"Bootstrap samples: {args.bootstrap}")
+        print(f"Statistic: {args.statistic}")
+        print()
+        
+        run_analysis(runs_dir, out_dir, args, metric_type)
+
+
+def run_analysis(runs_dir: Path, out_dir: Path, args, metric_type: str):
+    """Run the analysis for a specific metric type."""
     
     # 1) Find all event files
     if args.verbose:
@@ -663,11 +734,23 @@ def main():
     for rid in identities:
         # Extract intervention from the event file path
         # Path is like: .../dense/seed_0_20260120_110836/.../events...
+        # OR: .../gmp/one_layer/seed_0_20260120_110836/.../events...
         event_path = Path(rid.event_file)
         rel_path = event_path.relative_to(runs_dir)
         
-        # First part of relative path should be the intervention
-        intervention = rel_path.parts[0] if len(rel_path.parts) > 0 else "unknown"
+        # Detect intervention name, handling nested structures
+        if len(rel_path.parts) > 1:
+            # Check if second part is a subfolder like 'one_layer' or 'whole_network'
+            first_part = rel_path.parts[0]
+            second_part = rel_path.parts[1] if len(rel_path.parts) > 1 else ""
+            
+            # If second part looks like a variant (not a seed folder), combine them
+            if second_part in ['one_layer', 'whole_network', 'last_layer', 'full_network']:
+                intervention = f"{first_part}_{second_part}"
+            else:
+                intervention = first_part
+        else:
+            intervention = rel_path.parts[0] if len(rel_path.parts) > 0 else "unknown"
         
         # Extract seed from the seed_* directory
         seed = rid.seed
@@ -701,7 +784,7 @@ def main():
                     print(f"  [SKIP] seed={seed}: {e}")
                 continue
             
-            metrics = extract_run_metrics(scalars, last_k_rank=args.last_k_rank)
+            metrics = extract_run_metrics(scalars, last_k_rank=args.last_k_rank, metric_type=metric_type)
             seed_metrics[seed] = metrics
         
         if skipped > 0:
@@ -825,7 +908,7 @@ def main():
     individual_dir.mkdir(parents=True, exist_ok=True)
     
     for intervention, data in sorted(all_intervention_data.items()):
-        display_name = INTERVENTION_NAMES.get(intervention, intervention.capitalize())
+        display_name = get_display_name(intervention)
         out_path = individual_dir / f"{intervention}_iqm_return.png"
         
         plot_individual_intervention(
@@ -889,8 +972,8 @@ def main():
         f.write(metrics_df.to_string(index=False))
         f.write("\n\n" + "=" * 120 + "\n")
         f.write("Metrics explained:\n")
-        f.write("  • Final IQM Return: Performance at END of training (last value)\n")
-        f.write("  • Peak IQM Return: BEST performance achieved during training (max value)\n")
+        f.write(f"  • Final IQM Return: {metric_type.upper()} performance at END of training (last value)\n")
+        f.write(f"  • Peak IQM Return: BEST {metric_type.upper()} performance achieved during training (max value)\n")
         f.write("  • Max Forgetting: WORST forgetting observed (max value)\n")
         f.write("  • Final Effective Rank: Diversity of learned features (avg of last 10 values)\n")
         f.write("  • Final Dormant Frac: Fraction of dormant neurons at END (lower is better)\n")

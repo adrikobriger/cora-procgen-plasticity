@@ -12,8 +12,8 @@
 
 set -euo pipefail
 
-REPO="/scratch/s5579783/cora-procgen-plasticity"
-VENV="/scratch/s5579783/venvs/cora"
+REPO="/scratch/$USER/cora-procgen-plasticity"
+VENV="/scratch/$USER/venvs/cora"
 
 EXPERIMENT="procgen_3_tasks_1_cycle_500k"
 NUM_PROCESSES=16

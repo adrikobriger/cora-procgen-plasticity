@@ -36,9 +36,9 @@ class ReDoIntervention(InterventionBase):
 
         # BUFFER SETTINGS
         self.use_activation_buffer: bool = bool(p.get("use_activation_buffer", False))
-        self.buffer_size: int = int(p.get("buffer_size", 50000))          # rows per task
-        self.store_every: int = int(p.get("store_every", 5))              # store every N forwards (FC hook calls)
-        self.eval_batch: int = int(p.get("eval_batch", 4096))             # rows to evaluate at recycle time
+        self.buffer_size: int = int(p.get("buffer_size", 50000)) # rows per task
+        self.store_every: int = int(p.get("store_every", 5)) # store every N forwards (FC hook calls)
+        self.eval_batch: int = int(p.get("eval_batch", 4096)) # rows to evaluate at recycle time
         self.mix_current_frac: float = float(p.get("mix_current_frac", 0.5))
         self.max_tasks_in_buffer: int = int(p.get("max_tasks_in_buffer", 50))
         self._disable_store: bool = False
@@ -199,7 +199,7 @@ class ReDoIntervention(InterventionBase):
         self._forward_calls += 1
 
         x = out.detach().reshape(-1, self.hidden)  # [N, H]
-        m = x.abs().mean(dim=0)                    # [H]
+        m = x.abs().mean(dim=0)  # [H]
         denom = m.mean().clamp_min(1e-8)
         m_norm = m / denom
 
@@ -421,7 +421,7 @@ class ReDoIntervention(InterventionBase):
         finally:
             self._disable_store = False
 
-        m = acts.abs().mean(dim=0)                            # [hidden]
+        m = acts.abs().mean(dim=0) # [hidden]
         denom = m.mean().clamp_min(1e-8)
         return m / denom
 

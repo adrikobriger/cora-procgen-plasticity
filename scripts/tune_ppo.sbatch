@@ -7,13 +7,13 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --time=3-00:00:00
-#SBATCH --output=/scratch/s5579783/cora-procgen-plasticity/logs/%x_%j.out
-#SBATCH --error=/scratch/s5579783/cora-procgen-plasticity/logs/%x_%j.err
+#SBATCH --output=/scratch/$USER/cora-procgen-plasticity/logs/%x_%j.out
+#SBATCH --error=/scratch/$USER/cora-procgen-plasticity/logs/%x_%j.err
 
 set -euo pipefail
 
-REPO="/scratch/s5579783/cora-procgen-plasticity"
-VENV="/scratch/s5579783/venvs/cora"
+REPO="/scratch/$USER/cora-procgen-plasticity"
+VENV="/scratch/$USER/venvs/cora"
 
 EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_1_cycle_1M}"
 TRIALS="${TRIALS:-10}"

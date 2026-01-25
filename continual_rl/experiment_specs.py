@@ -328,7 +328,6 @@ def get_available_experiments():
             cycle_count=2,
         ),
 
-        # Same 3 tasks but only 1 cycle (faster convergence study).
         "procgen_3_tasks_1_cycle_5m": create_procgen_sequence_loader(
             "procgen_3_tasks_1_cycle_5m",
             ["climber-v0",
@@ -551,18 +550,18 @@ def get_available_experiments():
 
         # TINY EXPERIMENT AS SANITY CHECK TO RUN QUICKLY
         "procgen_fruitbot_tiny": create_procgen_sequence_loader(
-            "procgen_fruitbot_tiny",                 # <-- make the name consistent
-            ["fruitbot-v0" for _ in range(2)],       # <-- 2 tasks instead of 5 (faster)
-            num_timesteps=4096,                      # <-- MUCH smaller than 3e6
+            "procgen_fruitbot_tiny",               
+            ["fruitbot-v0" for _ in range(2)],     
+            num_timesteps=4096,   
             task_params=dict(
                 num_levels=1,
                 start_level=0,
                 distribution_mode="easy"
             ),
             add_eval_task=False,
-            continual_testing_freq=10**12,           # <-- effectively disables continual eval spam
-            cycle_count=1,                           # <-- 1 cycle
-            start_level_ids=[1, 10]                  # <-- only 2 levels
+            continual_testing_freq=10**12, 
+            cycle_count=1,   
+            start_level_ids=[1, 10] 
         ),
 
 

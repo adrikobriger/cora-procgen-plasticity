@@ -230,7 +230,6 @@ def plot_individual_intervention(
         num_tasks: Number of tasks (for task labels)
         metric_type: "eval" or "train" for labeling
     """
-    # Set professional font
     plt.rcParams['font.family'] = 'serif'
     plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
     

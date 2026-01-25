@@ -7,13 +7,13 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --time=0-02:00:00
-#SBATCH --output=/scratch/s5579783/cora-procgen-plasticity/logs/%x_%j.out
-#SBATCH --error=/scratch/s5579783/cora-procgen-plasticity/logs/%x_%j.err
+#SBATCH --output=/scratch/$USER/cora-procgen-plasticity/logs/%x_%j.out
+#SBATCH --error=/scratch/$USER/cora-procgen-plasticity/logs/%x_%j.err
 
 set -euo pipefail
 
-REPO="/scratch/s5579783/cora-procgen-plasticity"
-VENV="/scratch/s5579783/venvs/cora"
+REPO="/scratch/$USER/cora-procgen-plasticity"
+VENV="/scratch/$USER/venvs/cora"
 
 EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_1_cycle_10k_debug}"
 TRIALS="${TRIALS:-2}"
@@ -31,7 +31,6 @@ cd "$REPO"
 source "$VENV/bin/activate"
 
 export PYTHONUNBUFFERED=1
-# Fix thread oversubscription: 1 thread per process for RL env stepping
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1

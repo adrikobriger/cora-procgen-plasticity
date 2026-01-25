@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${REPO:-/scratch/s5579783/cora-procgen-plasticity}"
-VENV="${VENV:-/scratch/s5579783/venvs/cora}"
+REPO="${REPO:-/scratch/$USER/cora-procgen-plasticity}"
+VENV="${VENV:-/scratch/$USER/venvs/cora}"
 EXPERIMENT="${EXPERIMENT:-procgen_3_tasks_1_cycle_500k_starpilot}"
 NUM_PROCESSES="${NUM_PROCESSES:-8}"
 TRIAL_SEEDS="${TRIAL_SEEDS:-0,1,2}"

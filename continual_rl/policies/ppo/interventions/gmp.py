@@ -208,10 +208,7 @@ class GMPIntervention(InterventionBase):
         # enforce weights immediately after pruning
         self._apply_masks_to_params_()
 
-        # clear optimizer state for pruned weights?
         # simplest + safe: clear ALL optimizer state so momentum doesn't revive "near-zero" dynamics
-        # but since we enforce hard masks, it's not strictly necessary.
-        # We keep it minimal: do nothing here.
 
         new_sparsity = self._current_sparsity()
         self.logger.info(
@@ -264,12 +261,7 @@ class GMPIntervention(InterventionBase):
         kth = to_prune
         threshold = torch.kthvalue(all_mags, kth).values.item()
 
-        # prune weights with magnitude <= threshold, but make sure we prune exactly 'to_prune'
-        # To do exact pruning, we do a second pass using sorting indices.
-        # Build a global list of (mag, name, index_in_tensor_flat_active)
-        # For simplicity and speed, do approximate exactness:
-        #   prune <= threshold then, if over-pruned, unprune some = threshold ties.
-        # This is fine for research use and stable.
+        # prune weights with magnitude <= threshold
 
         pruned_count = 0
         tie_candidates: List[Tuple[str, torch.Tensor]] = []

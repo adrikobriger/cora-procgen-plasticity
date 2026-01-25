@@ -144,6 +144,29 @@ for RUNS_DIR in "${RUNS_DIRS[@]}"; do
         --bootstrap "$BOOTSTRAP" \
         --statistic "$STATISTIC" \
         $VERBOSE
+
+    # Prefer grid-search trials for ablations (they contain trial_summary.json)
+    GRID_ABLATION_DIR="${ROOT_DIR}/runs/grid/${RUNS_NAME}"
+    if [ -d "$GRID_ABLATION_DIR" ]; then
+        ABLATION_INPUT="$GRID_ABLATION_DIR"
+    else
+        ABLATION_INPUT="$RUNS_DIR"
+    fi
+    echo ""
+    echo "Generating ablation study plots... (source: $ABLATION_INPUT)"
+    "$PYTHON" "${SCRIPT_DIR}/ablation_plots.py" \
+        --runs-dir "$ABLATION_INPUT" \
+        --out-dir "${OUT_DIR_BASE}/ablations" \
+        --task-length 500000 \
+        --num-tasks 3 \
+        --grid-step 50000 \
+        --min-points "$MIN_POINTS" \
+        --bootstrap "$BOOTSTRAP" \
+        --statistic "$STATISTIC" \
+        --formats png \
+        $VERBOSE
+    
+    # (config comparison plots removed)
 done
 
 echo ""
